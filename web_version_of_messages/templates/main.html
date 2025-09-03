@@ -1,0 +1,361 @@
+{% extends "base.html" %}
+
+{% block title %}主页 - 漂流瓶{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="card user-info-card mb-4">
+            <div class="card-body text-center">
+                <h2><i class="fas fa-user"></i> 欢迎, {{ user_info.name }}!</h2>
+                <p class="mb-0">
+                    <i class="fas fa-phone"></i> 电话: {{ user_info.phone }} | 
+                    <i class="fas fa-globe"></i> 国家: {{ user_info.place }} | 
+                    <i class="fas fa-venus-mars"></i> 性别: {{ user_info.sex }}
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-12 text-center">
+        <div class="btn-group-lg" role="group">
+            <button type="button" class="btn btn-primary btn-lg me-3 floating-animation" id="sendBottleBtn">
+                <i class="fas fa-paper-plane"></i> 发送漂流瓶
+            </button>
+            <button type="button" class="btn btn-success btn-lg ms-3 floating-animation" id="receiveBottleBtn">
+                <i class="fas fa-anchor"></i> 接收漂流瓶
+            </button>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-4">
+        <div class="card h-100">
+            <div class="card-header bg-primary text-white">
+                <h5><i class="fas fa-comments"></i> 聊天列表</h5>
+            </div>
+            <div class="card-body p-0">
+                <ul class="list-group list-group-flush" id="chatUserList" style="max-height: 500px; overflow-y: auto;">
+                    <!-- 聊天用户列表将通过JavaScript动态加载 -->
+                </ul>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-8">
+        <div class="card h-100">
+            <div class="card-header bg-info text-white">
+                <h5><i class="fas fa-comment-dots"></i> 聊天窗口</h5>
+            </div>
+            <div class="card-body d-flex flex-column p-0">
+                <div class="chat-container flex-grow-1" id="chatContainer">
+                    <div class="d-flex justify-content-center align-items-center h-100">
+                        <div class="text-center">
+                            <i class="fas fa-comment-alt fa-3x text-muted mb-3"></i>
+                            <p class="text-muted">选择一个聊天或开始新聊天</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="message-input-container p-3">
+                    <div class="input-group">
+                        <input type="text" class="form-control message-input" id="messageInput" placeholder="输入消息..." disabled>
+                        <button class="btn btn-primary" type="button" id="sendMessageBtn" disabled>
+                            <i class="fas fa-paper-plane"></i> 发送
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 发送漂流瓶模态框 -->
+<div class="modal fade" id="sendBottleModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title"><i class="fas fa-paper-plane"></i> 发送漂流瓶</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label for="bottleMessage" class="form-label">消息内容</label>
+                    <textarea class="form-control" id="bottleMessage" rows="4" maxlength="100" placeholder="请输入消息（最多100字）"></textarea>
+                    <div class="form-text">还可以输入 <span id="charCount">100</span> 字符</div>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="persistentCheck">
+                    <label class="form-check-label" for="persistentCheck">
+                        永久保存漂流瓶（默认在回复时删除）
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary" id="sendBottleSubmit">发送</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 接收漂流瓶模态框 -->
+<div class="modal fade" id="receiveBottleModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-success text-white">
+                <h5 class="modal-title"><i class="fas fa-anchor"></i> 接收漂流瓶</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="bottleContent">
+                    <div class="text-center">
+                        <i class="fas fa-anchor fa-2x text-muted mb-3"></i>
+                        <p class="text-muted">点击"接收"按钮捞取漂流瓶</p>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                <button type="button" class="btn btn-success" id="receiveBottleSubmit">接收</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let currentChatUser = null;
+    let chatRefreshInterval = null;
+    let previousMessageCount = 0;  // 跟踪之前的消息数量
+    
+    $(document).ready(function() {
+        // 加载聊天用户列表
+        loadChatUsers();
+        
+        // 设置定时刷新聊天用户列表
+        setInterval(loadChatUsers, 5000);
+        
+        // 发送漂流瓶按钮点击事件
+        $('#sendBottleBtn').click(function() {
+            $('#sendBottleModal').modal('show');
+        });
+        
+        // 接收漂流瓶按钮点击事件
+        $('#receiveBottleBtn').click(function() {
+            $('#receiveBottleModal').modal('show');
+        });
+        
+        // 发送漂流瓶提交事件
+        $('#sendBottleSubmit').click(function() {
+            const message = $('#bottleMessage').val().trim();
+            const isPersistent = $('#persistentCheck').is(':checked') ? '1' : '0';
+            
+            if (!message) {
+                alert('请输入消息内容');
+                return;
+            }
+            
+            if (message.length > 100) {
+                alert('消息不能超过100字');
+                return;
+            }
+            
+            $.post('/send_bottle', {
+                message: message,
+                is_persistent: isPersistent
+            }, function(data) {
+                if (data.success) {
+                    alert(data.message);
+                    $('#bottleMessage').val('');
+                    $('#persistentCheck').prop('checked', false);
+                    $('#sendBottleModal').modal('hide');
+                } else {
+                    alert(data.message);
+                }
+            });
+        });
+        
+        // 接收漂流瓶提交事件
+        $('#receiveBottleSubmit').click(function() {
+            $.get('/receive_bottle', function(data) {
+                if (data.success) {
+                    if (data.data) {
+                        let content = `<div class="mb-3">
+                            <div class="alert alert-info">
+                                <strong><i class="fas fa-envelope"></i> 您收到的漂流瓶:</strong>
+                            </div>
+                            <p><strong>消息:</strong> ${data.data.message}</p>
+                            <p><strong>来自:</strong> ${data.data.sender}</p>
+                            <p><strong>时间:</strong> ${data.data.time}</p>`;
+                        
+                        if (data.data.sender_info) {
+                            content += `<div class="card bg-light">
+                                <div class="card-body">
+                                    <h6><i class="fas fa-user"></i> 发送者信息</h6>
+                                    <p class="mb-1"><strong>电话:</strong> ${data.data.sender_info.phone}</p>
+                                    <p class="mb-1"><strong>国家:</strong> ${data.data.sender_info.place}</p>
+                                    <p class="mb-0"><strong>性别:</strong> ${data.data.sender_info.sex}</p>
+                                </div>
+                            </div>`;
+                        }
+                        
+                        if (data.data.is_persistent == 1) {
+                            content += `<div class="alert alert-warning mt-2">[此漂流瓶已被发送者设置为永久保存]</div>`;
+                        }
+                        
+                        content += `</div>`;
+                        $('#bottleContent').html(content);
+                    } else {
+                        $('#bottleContent').html(`<div class="text-center">
+                            <i class="fas fa-exclamation-circle fa-2x text-warning mb-3"></i>
+                            <p class="text-muted">${data.message}</p>
+                        </div>`);
+                    }
+                } else {
+                    alert(data.message);
+                }
+            });
+        });
+        
+        // 发送消息按钮点击事件
+        $('#sendMessageBtn').click(function() {
+            sendMessage();
+        });
+        
+        // 消息输入框回车事件
+        $('#messageInput').keypress(function(e) {
+            if (e.which == 13) {
+                sendMessage();
+            }
+        });
+        
+        // 字符计数
+        $('#bottleMessage').on('input', function() {
+            const maxLength = 100;
+            const currentLength = $(this).val().length;
+            const remaining = maxLength - currentLength;
+            $('#charCount').text(remaining);
+        });
+    });
+    
+    // 加载聊天用户列表
+    function loadChatUsers() {
+        $.get('/chat_users', function(data) {
+            if (data.success) {
+                let html = '';
+                if (data.data.length > 0) {
+                    data.data.forEach(function(user) {
+                        html += `<li class="list-group-item d-flex justify-content-between align-items-center" 
+                                  style="cursor: pointer;" onclick="openChat('${user.name}')">
+                                    <span>${user.name}</span>
+                                    ${user.has_unread ? '<span class="badge bg-danger rounded-pill">新消息</span>' : ''}
+                                </li>`;
+                    });
+                } else {
+                    html = `<li class="list-group-item text-center text-muted">
+                        <i class="fas fa-comment-slash"></i> 暂无聊天记录
+                    </li>`;
+                }
+                $('#chatUserList').html(html);
+            }
+        });
+    }
+    
+    // 打开聊天窗口
+    function openChat(username) {
+        currentChatUser = username;
+        previousMessageCount = 0;  // 重置消息计数
+        $('#chatContainer').html('<div class="d-flex justify-content-center align-items-center h-100"><div class="spinner-border" role="status"></div></div>');
+        $('#messageInput').prop('disabled', false);
+        $('#sendMessageBtn').prop('disabled', false);
+        
+        // 加载聊天记录
+        loadChatMessages();
+        
+        // 设置定时刷新聊天记录
+        if (chatRefreshInterval) {
+            clearInterval(chatRefreshInterval);
+        }
+        chatRefreshInterval = setInterval(loadChatMessages, 3000);
+    }
+    
+    // 加载聊天记录
+    function loadChatMessages() {
+        if (!currentChatUser) return;
+        
+        $.get(`/chat_messages/${currentChatUser}`, function(data) {
+            if (data.success) {
+                // 只有在消息数量变化时才更新界面
+                if (data.data.length !== previousMessageCount) {
+                    displayMessages(data.data, true);  // 有新消息时滚动到底部
+                    previousMessageCount = data.data.length;
+                } else {
+                    displayMessages(data.data, false); // 无新消息时保持当前位置
+                }
+            }
+        });
+    }
+    
+    // 显示消息
+    function displayMessages(messages, scrollToBottom) {
+        let html = '';
+        if (messages.length > 0) {
+            messages.forEach(function(msg) {
+                const isSent = msg.sender === '{{ user_info.name }}';
+                const messageClass = isSent ? 'sent-message' : 'received-message';
+                const alignment = isSent ? 'text-end' : 'text-start';
+                
+                html += `<div class="mb-3 ${alignment}">
+                    <div class="message-bubble ${messageClass}">`;
+                
+                if (msg.type === 'text') {
+                    html += `<div>${msg.content}</div>`;
+                } else {
+                    html += `<img src="${msg.content}" class="img-fluid rounded" style="max-width: 300px;" alt="图片消息">`;
+                }
+                
+                html += `<div class="small mt-1">
+                            <span>${msg.time}</span>
+                            ${isSent ? `<span class="ms-2">${msg.is_read ? '<i class="fas fa-check-double text-success"></i>' : '<i class="fas fa-check text-muted"></i>'}</span>` : ''}
+                        </div>
+                    </div>
+                </div>`;
+            });
+        } else {
+            html = `<div class="text-center text-muted mt-3">
+                <i class="fas fa-comment-slash"></i> 暂无消息
+            </div>`;
+        }
+        
+        $('#chatContainer').html(html);
+        
+        // 只有在有新消息时才滚动到底部
+        if (scrollToBottom) {
+            $('#chatContainer').scrollTop($('#chatContainer')[0].scrollHeight);
+        }
+    }
+    
+    // 发送消息
+    function sendMessage() {
+        const message = $('#messageInput').val().trim();
+        if (!message || !currentChatUser) return;
+        
+        $.post('/send_private_message', {
+            receiver: currentChatUser,
+            message: message
+        }, function(data) {
+            if (data.success) {
+                $('#messageInput').val('');
+                loadChatMessages(); // 重新加载消息
+            } else {
+                alert(data.message);
+            }
+        });
+    }
+</script>
+{% endblock %}

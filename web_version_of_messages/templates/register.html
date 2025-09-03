@@ -1,0 +1,71 @@
+
+{% extends "base.html" %}
+
+{% block title %}注册 - 漂流瓶{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-12 col-md-8 col-lg-6">
+        <div class="card login-card floating-animation">
+            <div class="card-header login-header text-center">
+                <h3><i class="fas fa-user-plus"></i> 用户注册</h3>
+                <p class="mb-0">加入漂流瓶社区</p>
+            </div>
+            <div class="card-body login-body">
+                <form method="POST">
+                    <div class="mb-3">
+                        <label for="name" class="form-label">姓名</label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="fas fa-signature"></i></span>
+                            <input type="text" class="form-control" id="name" name="name" placeholder="请输入真实姓名" required>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="password" class="form-label">密码</label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="fas fa-lock"></i></span>
+                            <input type="password" class="form-control" id="password" name="password" placeholder="请输入密码" required>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="password_confirm" class="form-label">确认密码</label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="fas fa-lock"></i></span>
+                            <input type="password" class="form-control" id="password_confirm" name="password_confirm" placeholder="请再次输入密码" required>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="phone" class="form-label">电话</label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="fas fa-phone"></i></span>
+                            <input type="text" class="form-control" id="phone" name="phone" placeholder="请输入联系电话" required>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="place" class="form-label">国家</label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="fas fa-globe"></i></span>
+                            <input type="text" class="form-control" id="place" name="place" placeholder="请输入所在国家" required>
+                        </div>
+                    </div>
+                    <div class="mb-4">
+                        <label for="sex" class="form-label">性别</label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="fas fa-venus-mars"></i></span>
+                            <select class="form-control" id="sex" name="sex" required>
+                                <option value="">请选择性别</option>
+                                <option value="男">男</option>
+                                <option value="女">女</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="d-grid gap-3">
+                        <button type="submit" class="btn btn-login btn-lg">注册</button>
+                        <a href="{{ url_for('login') }}" class="btn btn-outline-primary">已有账号？立即登录</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,312 @@
+/* 漂流瓶应用程序样式表 */
+
+/* 主窗口背景 */
+QMainWindow#main_window {
+    background-color: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 1,
+                                      stop: 0 #667eea, stop: 1 #764ba2);
+}
+
+/* 对话框样式 */
+QDialog {
+    background-color: #f5f7fa;
+    font-family: "Microsoft YaHei", sans-serif;
+}
+
+/* 登录界面样式 */
+QLabel {
+    color: #2c3e50;
+    font-family: "Microsoft YaHei", sans-serif;
+}
+
+/* 标题标签 */
+QLabel#title_label {
+    font-size: 28px;
+    font-weight: bold;
+    color: #2c3e50;
+    margin-bottom: 30px;
+}
+
+/* 对话框标题标签 */
+QDialog QLabel {
+    color: #2c3e50;
+}
+
+/* 表单标签 */
+QFormLayout > QLabel {
+    color: #2c3e50;
+    font-weight: bold;
+    font-size: 14px;
+}
+
+/* 输入框样式 */
+QLineEdit, QTextEdit {
+    border: 2px solid #e1e1e1;
+    border-radius: 8px;
+    padding: 8px;
+    background-color: #ffffff;
+    color: #2c3e50;
+    font-size: 14px;
+    selection-background-color: #3498db;
+}
+
+QLineEdit:focus, QTextEdit:focus {
+    border-color: #3498db;
+    outline: none;
+}
+
+/* 聊天消息显示区域 */
+QTextEdit#message_display {
+    border: 1px solid #e1e1e1;
+    border-radius: 12px;
+    background-color: #ffffff;
+    font-size: 14px;
+    padding: 0;
+}
+
+/* 聊天输入框 */
+QLineEdit#message_input {
+    border: 2px solid #e1e1e1;
+    border-radius: 24px;
+    padding: 10px 20px;
+    background-color: #f8f9fa;
+    font-size: 14px;
+}
+
+/* 列表样式 */
+QListWidget {
+    border: 1px solid #e1e1e1;
+    border-radius: 12px;
+    background-color: #ffffff;
+    color: #2c3e50;
+    font-size: 14px;
+}
+
+QListWidget::item {
+    padding: 12px 15px;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+QListWidget::item:selected {
+    background-color: #e3f2fd;
+    color: #1976d2;
+    border-radius: 8px;
+    margin: 2px 5px;
+}
+
+/* 按钮样式 */
+QPushButton {
+    background-color: #1976d2;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 12px 25px;
+    font-size: 16px;
+    font-weight: bold;
+    font-family: "Microsoft YaHei", sans-serif;
+    min-width: 100px;
+}
+
+QPushButton:hover {
+    background-color: #1565c0;
+}
+
+QPushButton:pressed {
+    background-color: #0d47a1;
+}
+
+QPushButton:disabled {
+    background-color: #bdc3c7;
+    color: #95a5a6;
+}
+
+/* 分组框样式 */
+QGroupBox {
+    border: 2px solid #1976d2;
+    border-radius: 12px;
+    margin-top: 1ex;
+    padding: 20px;
+    background-color: rgba(255, 255, 255, 0.95);
+}
+
+QGroupBox::title {
+    padding: 0 10px;
+    color: #1976d2;
+    font-weight: bold;
+    font-size: 16px;
+}
+
+/* 消息框样式 */
+QMessageBox {
+    background-color: #ffffff;
+    font-family: "Microsoft YaHei", sans-serif;
+}
+
+QMessageBox QLabel {
+    color: #2c3e50;
+}
+
+QMessageBox QPushButton {
+    min-width: 80px;
+    padding: 8px 15px;
+}
+
+/* 对话框按钮盒样式 */
+QDialogButtonBox QPushButton {
+    min-width: 80px;
+    padding: 8px 15px;
+}
+
+/* 滚动条样式 */
+QScrollBar:vertical {
+    border: none;
+    background: #f0f0f0;
+    width: 12px;
+    border-radius: 6px;
+}
+
+QScrollBar::handle:vertical {
+    background: #c0c0c0;
+    border-radius: 6px;
+    min-height: 20px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #a0a0a0;
+}
+
+/* 登录按钮特殊样式 */
+QPushButton#login_btn {
+    background-color: #1976d2;
+    border-radius: 12px;
+    min-width: 120px;
+    padding: 12px 25px;
+}
+
+QPushButton#login_btn:hover {
+    background-color: #1565c0;
+}
+
+/* 注册按钮特殊样式 */
+QPushButton#register_btn {
+    background-color: #4caf50;
+    border-radius: 12px;
+    min-width: 120px;
+    padding: 12px 25px;
+}
+
+QPushButton#register_btn:hover {
+    background-color: #43a047;
+}
+
+/* 提交按钮特殊样式 */
+QPushButton#submit_btn {
+    background-color: #4caf50;
+    border-radius: 12px;
+    min-width: 120px;
+    padding: 12px 25px;
+}
+
+QPushButton#submit_btn:hover {
+    background-color: #43a047;
+}
+
+/* 返回按钮特殊样式 */
+QPushButton#back_btn {
+    background-color: #f44336;
+    border-radius: 12px;
+    min-width: 120px;
+    padding: 12px 25px;
+}
+
+QPushButton#back_btn:hover {
+    background-color: #e53935;
+}
+
+/* 发送按钮特殊样式 */
+QPushButton#send_btn {
+    background-color: #1976d2;
+    border-radius: 22px;
+    padding: 10px 25px;
+    min-width: 80px;
+}
+
+QPushButton#send_btn:hover {
+    background-color: #1565c0;
+}
+
+/* 接收按钮特殊样式 */
+QPushButton#receive_btn {
+    background-color: #9c27b0;
+    border-radius: 22px;
+    padding: 10px 25px;
+    min-width: 80px;
+}
+
+QPushButton#receive_btn:hover {
+    background-color: #8e24aa;
+}
+
+/* 退出按钮特殊样式 */
+QPushButton#exit_btn {
+    background-color: #f44336;
+    border-radius: 22px;
+    padding: 10px 25px;
+    min-width: 80px;
+}
+
+QPushButton#exit_btn:hover {
+    background-color: #e53935;
+}
+
+/* 刷新按钮特殊样式 */
+QPushButton#refresh_btn {
+    background-color: #ff9800;
+    border-radius: 10px;
+    padding: 8px 15px;
+    min-width: 100px;
+}
+
+QPushButton#refresh_btn:hover {
+    background-color: #f57c00;
+}
+
+/* 回复按钮特殊样式 */
+QPushButton#reply_btn {
+    background-color: #009688;
+    border-radius: 10px;
+    padding: 8px 15px;
+    min-width: 80px;
+}
+
+QPushButton#reply_btn:hover {
+    background-color: #00897b;
+}
+
+/* 确定按钮特殊样式 */
+QPushButton#ok_btn {
+    background-color: #1976d2;
+    border-radius: 10px;
+    padding: 8px 15px;
+    min-width: 80px;
+}
+
+QPushButton#ok_btn:hover {
+    background-color: #1565c0;
+}
+
+/* 发图按钮特殊样式 */
+QPushButton#image_btn {
+    background-color: #4caf50;
+    border-radius: 22px;
+    padding: 10px 15px;
+    min-width: 70px;
+}
+
+QPushButton#image_btn:hover {
+    background-color: #43a047;
+}
+
+/* 关于对话框样式 */
+QDialog#about_dialog {
+    background-color: #f5f7fa;
+}
