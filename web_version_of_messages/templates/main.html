@@ -63,6 +63,9 @@
                 <div class="message-input-container p-3">
                     <div class="input-group">
                         <input type="text" class="form-control message-input" id="messageInput" placeholder="输入消息..." disabled>
+                        <button class="btn btn-success" type="button" id="sendImageBtn" disabled>
+                            <i class="fas fa-image"></i> 发图
+                        </button>
                         <button class="btn btn-primary" type="button" id="sendMessageBtn" disabled>
                             <i class="fas fa-paper-plane"></i> 发送
                         </button>
@@ -121,6 +124,36 @@
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
                 <button type="button" class="btn btn-success" id="receiveBottleSubmit">接收</button>
+                <button type="button" class="btn btn-primary" id="replyBottleBtn" style="display: none;">回复</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 发送图片模态框 -->
+<div class="modal fade" id="sendImageModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-success text-white">
+                <h5 class="modal-title"><i class="fas fa-image"></i> 发送图片</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="sendImageForm" enctype="multipart/form-data">
+                    <input type="hidden" id="imageReceiver" name="receiver">
+                    <div class="mb-3">
+                        <label for="imageFile" class="form-label">选择图片</label>
+                        <input class="form-control" type="file" id="imageFile" name="image" accept="image/*">
+                    </div>
+                    <div class="mb-3" id="imagePreviewContainer" style="display: none;">
+                        <label class="form-label">图片预览</label>
+                        <img id="imagePreview" src="" class="img-fluid rounded" style="max-height: 200px;">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-success" id="sendImageSubmit">发送</button>
             </div>
         </div>
     </div>
@@ -132,6 +165,7 @@
     let currentChatUser = null;
     let chatRefreshInterval = null;
     let previousMessageCount = 0;  // 跟踪之前的消息数量
+    let currentBottleData = null;  // 存储当前漂流瓶数据
     
     $(document).ready(function() {
         // 加载聊天用户列表
@@ -185,6 +219,9 @@
             $.get('/receive_bottle', function(data) {
                 if (data.success) {
                     if (data.data) {
+                        // 保存当前漂流瓶数据
+                        currentBottleData = data.data;
+                        
                         let content = `<div class="mb-3">
                             <div class="alert alert-info">
                                 <strong><i class="fas fa-envelope"></i> 您收到的漂流瓶:</strong>
@@ -210,11 +247,16 @@
                         
                         content += `</div>`;
                         $('#bottleContent').html(content);
+                        
+                        // 显示回复按钮
+                        $('#replyBottleBtn').show();
                     } else {
                         $('#bottleContent').html(`<div class="text-center">
                             <i class="fas fa-exclamation-circle fa-2x text-warning mb-3"></i>
                             <p class="text-muted">${data.message}</p>
                         </div>`);
+                        // 隐藏回复按钮
+                        $('#replyBottleBtn').hide();
                     }
                 } else {
                     alert(data.message);
@@ -222,9 +264,87 @@
             });
         });
         
+        // 回复漂流瓶按钮点击事件
+        $('#replyBottleBtn').click(function() {
+            if (!currentBottleData) return;
+            
+            // 调用后端API回复漂流瓶
+            $.ajax({
+                url: '/reply_bottle',
+                type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({
+                    sender_name: currentBottleData.sender,
+                    time: currentBottleData.time,
+                    is_persistent: currentBottleData.is_persistent
+                }),
+                success: function(data) {
+                    if (data.success) {
+                        // 关闭模态框
+                        $('#receiveBottleModal').modal('hide');
+                        // 打开与发送者的聊天
+                        openChat(currentBottleData.sender);
+                    } else {
+                        alert(data.message);
+                    }
+                },
+                error: function() {
+                    alert('回复漂流瓶时发生错误');
+                }
+            });
+        });
+        
         // 发送消息按钮点击事件
         $('#sendMessageBtn').click(function() {
             sendMessage();
+        });
+        
+        // 发送图片按钮点击事件
+        $('#sendImageBtn').click(function() {
+            if (!currentChatUser) return;
+            $('#imageReceiver').val(currentChatUser);
+            $('#imageFile').val('');
+            $('#imagePreviewContainer').hide();
+            $('#sendImageModal').modal('show');
+        });
+        
+        // 图片文件选择事件
+        $('#imageFile').change(function() {
+            const file = this.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    $('#imagePreview').attr('src', e.target.result);
+                    $('#imagePreviewContainer').show();
+                }
+                reader.readAsDataURL(file);
+            } else {
+                $('#imagePreviewContainer').hide();
+            }
+        });
+        
+        // 发送图片提交事件
+        $('#sendImageSubmit').click(function() {
+            const formData = new FormData($('#sendImageForm')[0]);
+            
+            $.ajax({
+                url: '/send_private_image',
+                type: 'POST',
+                data: formData,
+                processData: false,
+                contentType: false,
+                success: function(data) {
+                    if (data.success) {
+                        $('#sendImageModal').modal('hide');
+                        loadChatMessages(); // 重新加载消息
+                    } else {
+                        alert(data.message);
+                    }
+                },
+                error: function() {
+                    alert('发送图片时发生错误');
+                }
+            });
         });
         
         // 消息输入框回车事件
@@ -273,6 +393,7 @@
         $('#chatContainer').html('<div class="d-flex justify-content-center align-items-center h-100"><div class="spinner-border" role="status"></div></div>');
         $('#messageInput').prop('disabled', false);
         $('#sendMessageBtn').prop('disabled', false);
+        $('#sendImageBtn').prop('disabled', false);
         
         // 加载聊天记录
         loadChatMessages();

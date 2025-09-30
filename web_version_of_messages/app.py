@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash, send_from_directory
 import sys
 import os
+from dotenv import load_dotenv # 导入 load_dotenv
 
 # 将上级目录添加到Python路径中，以便导入fuc模块
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -9,8 +10,11 @@ import fuc
 import datetime
 import base64
 
+load_dotenv() # 加载 .env 文件中的环境变量
+
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-here'  # 在生产环境中应该使用更安全的密钥
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 限制上传文件大小为16MB
 
 # 静态文件路由
 @app.route('/static/<path:filename>')
@@ -161,11 +165,8 @@ def receive_bottle():
                 else:
                     user_info = None
                 
-                # 如果不是永久保存的漂流瓶，则删除它
-                if is_persistent == 0:
-                    sql = 'DELETE FROM mm WHERE time = %s and name = %s'
-                    cursor.execute(sql, [time, sender_name])
-                    fuc.connection.commit()
+                # 注意：与GUI版本不同，Web版本不在这里删除漂流瓶
+                # 而是在用户明确选择回复时才删除（如果是非永久的）
                 
                 return jsonify({
                     'success': True,
@@ -179,6 +180,37 @@ def receive_bottle():
                 })
     except Exception as e:
         return jsonify({'success': False, 'message': f'接收消息时发生错误: {str(e)}'})
+
+# 回复漂流瓶
+@app.route('/reply_bottle', methods=['POST'])
+def reply_bottle():
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        data = request.get_json()
+        sender_name = data.get('sender_name')
+        bottle_time = data.get('time')
+        is_persistent = data.get('is_persistent', 0)
+        
+        if not sender_name or not bottle_time:
+            return jsonify({'success': False, 'message': '缺少必要参数'})
+        
+        # 如果不是永久保存的漂流瓶，则删除它
+        if is_persistent == 0:
+            with fuc.connection.cursor() as cursor:
+                sql = 'DELETE FROM mm WHERE time = %s and name = %s'
+                cursor.execute(sql, [bottle_time, sender_name])
+                fuc.connection.commit()
+        
+        # 返回成功，前端将打开与发送者的聊天
+        return jsonify({
+            'success': True, 
+            'message': '删除成功，准备打开聊天窗口',
+            'chat_with': sender_name
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'回复漂流瓶时发生错误: {str(e)}'})
 
 # 获取聊天用户列表
 @app.route('/chat_users')
@@ -233,23 +265,28 @@ def chat_messages(chat_with_user):
         
         # 添加图片消息
         for sender, receiver, image_data, image_type, time, is_read in image_messages:
-            # 保存图片数据到文件并获取路径
-            image_path = fuc.save_image_data_to_file(image_data, image_type, sender, time)
-            if image_path:
-                # 生成图片的URL，相对于static目录
-                # 移除"images/"前缀，因为static目录会自动映射
-                if image_path.startswith("images/"):
-                    image_url = "/static/" + image_path
-                else:
-                    image_url = "/static/images/" + os.path.basename(image_path)
-                all_messages.append({
-                    'type': 'image',
-                    'sender': sender,
-                    'receiver': receiver,
-                    'content': image_url,
-                    'time': time,
-                    'is_read': is_read
-                })
+            try:
+                # 保存图片数据到文件并获取路径
+                image_path = fuc.save_image_data_to_file(image_data, image_type, sender, time)
+                if image_path:
+                    # 生成图片的URL，相对于static目录
+                    # 移除"images/"前缀，因为static目录会自动映射
+                    if image_path.startswith("images/"):
+                        image_url = "/static/" + image_path
+                    else:
+                        image_url = "/static/images/" + os.path.basename(image_path)
+                    all_messages.append({
+                        'type': 'image',
+                        'sender': sender,
+                        'receiver': receiver,
+                        'content': image_url,
+                        'time': time,
+                        'is_read': is_read
+                    })
+            except Exception as e:
+                print(f"处理图片消息时发生错误: {str(e)}")
+                # 即使单个图片消息处理失败，也不影响其他消息
+                continue
         
         # 按时间排序
         all_messages.sort(key=lambda x: x['time'])
@@ -277,6 +314,51 @@ def send_private_message():
             return jsonify({'success': False, 'message': '发送失败'})
     except Exception as e:
         return jsonify({'success': False, 'message': f'发送消息时发生错误: {str(e)}'})
+
+# 发送私聊图片消息
+@app.route('/send_private_image', methods=['POST'])
+def send_private_image():
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    receiver_name = request.form['receiver']
+    if 'image' not in request.files:
+        return jsonify({'success': False, 'message': '没有上传图片'})
+    
+    image_file = request.files['image']
+    if image_file.filename == '':
+        return jsonify({'success': False, 'message': '没有选择图片'})
+    destination_path = None # 初始化 destination_path
+    try:
+        # 创建图片存储目录
+        image_dir = os.path.join(app.root_path, 'static', 'images')
+        if not os.path.exists(image_dir):
+            os.makedirs(image_dir)
+        
+        # 生成唯一的文件名
+        import uuid
+        import datetime
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        unique_filename = f"{uuid.uuid4().hex}_{timestamp}{os.path.splitext(image_file.filename)[1]}"
+        destination_path = os.path.join(image_dir, unique_filename)
+        
+        # 保存图片到static/images目录
+        image_file.save(destination_path)
+        
+        # 保存图片消息到数据库
+        full_image_path = os.path.join('images', unique_filename)
+        if fuc.send_private_image_message(session['username'], receiver_name, destination_path):
+            return jsonify({'success': True, 'message': '发送成功'})
+        else:
+            # 如果保存数据库失败，删除已保存的图片文件
+            if destination_path and os.path.exists(destination_path): # 检查 destination_path 是否已赋值
+                os.remove(destination_path)
+            return jsonify({'success': False, 'message': '发送失败'})
+    except Exception as e:
+        # 删除可能已保存的图片文件
+        if destination_path and os.path.exists(destination_path): # 检查 destination_path 是否已赋值
+            os.remove(destination_path)
+        return jsonify({'success': False, 'message': f'发送图片时发生错误: {str(e)}'})
 
 # 退出登录
 @app.route('/logout')
@@ -333,4 +415,6 @@ def download_program():
     return send_file(zip_path, as_attachment=True, download_name=zip_filename)
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    APP_IP = os.getenv('APP_IP', '127.0.0.1')  # 默认值
+    APP_PORT = int(os.getenv('APP_PORT', 5000)) # 默认值
+    app.run(debug=True, host=APP_IP, port=APP_PORT)
