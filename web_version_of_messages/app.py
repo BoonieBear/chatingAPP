@@ -1,7 +1,6 @@
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash, send_from_directory
 import sys
 import os
-from dotenv import load_dotenv # 导入 load_dotenv
 
 # 将上级目录添加到Python路径中，以便导入fuc模块
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -9,8 +8,6 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import fuc
 import datetime
 import base64
-
-load_dotenv() # 加载 .env 文件中的环境变量
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-here'  # 在生产环境中应该使用更安全的密钥
@@ -37,25 +34,27 @@ def login():
         password = request.form['password']
         
         try:
-            with fuc.connection.cursor() as cursor:
-                sql = 'SELECT s_name,s_phone_num,s_sex,place,password FROM users WHERE s_name = %s'
-                cursor.execute(sql, [username])
-                resultset = cursor.fetchall()
-                if len(resultset) == 0:
-                    flash('用户不存在', 'error')
+            conn = fuc.get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT s_name,s_phone_num,s_sex,place,password FROM users WHERE s_name = ?", (username,))
+            resultset = cursor.fetchall()
+            if len(resultset) == 0:
+                flash('用户不存在', 'error')
+            else:
+                db_password = resultset[0][4]
+                if password == db_password:
+                    session['username'] = username
+                    session['user_info'] = {
+                        'name': resultset[0][0],
+                        'phone': resultset[0][1],
+                        'sex': resultset[0][2],
+                        'place': resultset[0][3]
+                    }
+                    conn.close()
+                    return redirect(url_for('main'))
                 else:
-                    db_password = resultset[0][4]
-                    if password == db_password:
-                        session['username'] = username
-                        session['user_info'] = {
-                            'name': resultset[0][0],
-                            'phone': resultset[0][1],
-                            'sex': resultset[0][2],
-                            'place': resultset[0][3]
-                        }
-                        return redirect(url_for('main'))
-                    else:
-                        flash('密码不正确！', 'error')
+                    flash('密码不正确！', 'error')
+            conn.close()
         except Exception as e:
             flash(f'登录时发生错误: {str(e)}', 'error')
     
@@ -81,15 +80,16 @@ def register():
             return render_template('register.html')
             
         try:
-            with fuc.connection.cursor() as cursor:
-                sql = 'INSERT INTO test_db.users(s_name,s_phone_num,s_sex,place,password) VALUES (%s,%s,%s,%s,%s)'
-                cursor.execute(sql, [name, phone, sex, place, password])
-                fuc.connection.commit()
-                flash('注册成功！', 'success')
-                return redirect(url_for('login'))
+            conn = fuc.get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO users(s_name,s_phone_num,s_sex,place,password) VALUES (?,?,?,?,?)", 
+                          (name, phone, sex, place, password))
+            conn.commit()
+            conn.close()
+            flash('注册成功！', 'success')
+            return redirect(url_for('login'))
         except Exception as e:
             flash(f'注册时发生错误: {str(e)}', 'error')
-            fuc.connection.rollback()
     
     return render_template('register.html')
 
@@ -119,13 +119,14 @@ def send_bottle():
     
     try:
         d = datetime.datetime.today()
-        with fuc.connection.cursor() as cursor:
-            sql = 'INSERT INTO test_db.mm(name,msg,time,is_persistent) VALUES (%s,%s,%s,%s)'
-            cursor.execute(sql, [session['username'], msg, d.strftime("%Y-%m-%d %H:%M:%S"), is_persistent])
-            fuc.connection.commit()
-            return jsonify({'success': True, 'message': '发送成功'})
+        conn = fuc.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO mm(name,msg,time,is_persistent) VALUES (?,?,?,?)", 
+                      (session['username'], msg, d.strftime("%Y-%m-%d %H:%M:%S"), is_persistent))
+        conn.commit()
+        conn.close()
+        return jsonify({'success': True, 'message': '发送成功'})
     except Exception as e:
-        fuc.connection.rollback()
         return jsonify({'success': False, 'message': f'发送消息时发生错误: {str(e)}'})
 
 # 接收漂流瓶
@@ -135,49 +136,51 @@ def receive_bottle():
         return jsonify({'success': False, 'message': '未登录'})
     
     try:
-        with fuc.connection.cursor() as cursor:
-            sql = 'SELECT name,msg,time,is_persistent FROM mm WHERE TRUE'
-            cursor.execute(sql, [])
-            resultset = cursor.fetchall()
-            l = len(resultset)
-            if l <= 0:
-                return jsonify({'success': True, 'message': '没有捞到任何漂流瓶，请稍后再试...', 'data': None})
+        conn = fuc.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT name,msg,time,is_persistent FROM mm")
+        resultset = cursor.fetchall()
+        l = len(resultset)
+        if l <= 0:
+            conn.close()
+            return jsonify({'success': True, 'message': '没有捞到任何漂流瓶，请稍后再试...', 'data': None})
+        else:
+            import random
+            pos = random.randint(0, l-1)
+            sender_name = resultset[pos][0]
+            msg = resultset[pos][1]
+            time = resultset[pos][2]
+            is_persistent = resultset[pos][3] if len(resultset[pos]) > 3 else 0
+            
+            # 获取用户信息
+            cursor.execute("SELECT s_name,s_phone_num,s_sex,place,password FROM users WHERE s_name = ?", (sender_name,))
+            user_result = cursor.fetchall()
+            
+            if user_result:
+                user_info = {
+                    'name': user_result[0][0],
+                    'phone': user_result[0][1],
+                    'sex': user_result[0][2],
+                    'place': user_result[0][3]
+                }
             else:
-                import random
-                pos = random.randint(0, l-1)
-                sender_name = resultset[pos][0]
-                msg = resultset[pos][1]
-                time = resultset[pos][2]
-                is_persistent = resultset[pos][3] if len(resultset[pos]) > 3 else 0
-                
-                # 获取用户信息
-                sql = 'SELECT s_name,s_phone_num,s_sex,place,password FROM users WHERE s_name = %s'
-                cursor.execute(sql, [sender_name])
-                user_result = cursor.fetchall()
-                
-                if user_result:
-                    user_info = {
-                        'name': user_result[0][0],
-                        'phone': user_result[0][1],
-                        'sex': user_result[0][2],
-                        'place': user_result[0][3]
-                    }
-                else:
-                    user_info = None
-                
-                # 注意：与GUI版本不同，Web版本不在这里删除漂流瓶
-                # 而是在用户明确选择回复时才删除（如果是非永久的）
-                
-                return jsonify({
-                    'success': True,
-                    'data': {
-                        'message': msg,
-                        'sender': sender_name,
-                        'time': time,
-                        'is_persistent': is_persistent,
-                        'sender_info': user_info
-                    }
-                })
+                user_info = None
+            
+            conn.close()
+            
+            # 注意：与GUI版本不同，Web版本不在这里删除漂流瓶
+            # 而是在用户明确选择回复时才删除（如果是非永久的）
+            
+            return jsonify({
+                'success': True,
+                'data': {
+                    'message': msg,
+                    'sender': sender_name,
+                    'time': time,
+                    'is_persistent': is_persistent,
+                    'sender_info': user_info
+                }
+            })
     except Exception as e:
         return jsonify({'success': False, 'message': f'接收消息时发生错误: {str(e)}'})
 
@@ -198,10 +201,11 @@ def reply_bottle():
         
         # 如果不是永久保存的漂流瓶，则删除它
         if is_persistent == 0:
-            with fuc.connection.cursor() as cursor:
-                sql = 'DELETE FROM mm WHERE time = %s and name = %s'
-                cursor.execute(sql, [bottle_time, sender_name])
-                fuc.connection.commit()
+            conn = fuc.get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM mm WHERE time = ? and name = ?", (bottle_time, sender_name))
+            conn.commit()
+            conn.close()
         
         # 返回成功，前端将打开与发送者的聊天
         return jsonify({
@@ -211,6 +215,250 @@ def reply_bottle():
         })
     except Exception as e:
         return jsonify({'success': False, 'message': f'回复漂流瓶时发生错误: {str(e)}'})
+
+# 搜索用户
+@app.route('/search_users', methods=['POST'])
+def search_users():
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        search_term = request.form.get('search_term', '').strip()
+        
+        if not search_term:
+            return jsonify({'success': False, 'message': '请输入搜索关键词'})
+        
+        conn = fuc.get_db_connection()
+        cursor = conn.cursor()
+        # 搜索用户名包含搜索词的用户（排除自己）
+        cursor.execute("SELECT s_name, s_phone_num, s_sex, place FROM users WHERE s_name LIKE ? AND s_name != ?",
+                       (f'%{search_term}%', session['username']))
+        resultset = cursor.fetchall()
+        conn.close()
+        
+        users = []
+        for row in resultset:
+            users.append({
+                'name': row['s_name'],
+                'phone': row['s_phone_num'],
+                'sex': row['s_sex'],
+                'place': row['place']
+            })
+        
+        return jsonify({'success': True, 'data': users})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'搜索用户时发生错误: {str(e)}'})
+
+# 添加好友
+@app.route('/add_friend', methods=['POST'])
+def add_friend():
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        friend_name = request.form.get('friend_name', '').strip()
+        
+        if not friend_name:
+            return jsonify({'success': False, 'message': '用户名不能为空'})
+        
+        # 检查用户是否存在
+        conn = fuc.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT s_name FROM users WHERE s_name = ?", (friend_name,))
+        result = cursor.fetchone()
+        
+        if not result:
+            conn.close()
+            return jsonify({'success': False, 'message': '用户不存在'})
+        
+        # 检查是否已经是好友（通过检查是否有聊天记录）
+        cursor.execute('''
+            SELECT COUNT(*) as count FROM (
+                SELECT 1 FROM private_text_messages 
+                WHERE (sender_name = ? AND receiver_name = ?) OR (sender_name = ? AND receiver_name = ?)
+                UNION
+                SELECT 1 FROM private_image_messages 
+                WHERE (sender_name = ? AND receiver_name = ?) OR (sender_name = ? AND receiver_name = ?)
+            )
+        ''', (session['username'], friend_name, friend_name, session['username'], 
+              session['username'], friend_name, friend_name, session['username']))
+        
+        result = cursor.fetchone()
+        conn.close()
+        
+        # 如果没有聊天记录，则发送一条默认消息来建立联系
+        if result['count'] == 0:
+            # 发送一条默认消息来建立联系
+            if not fuc.send_private_message(session['username'], friend_name, "你好！我们已经是好友了，现在可以开始聊天了。"):
+                return jsonify({'success': False, 'message': '添加好友失败'})
+        
+        return jsonify({'success': True, 'message': '添加好友成功'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'添加好友时发生错误: {str(e)}'})
+
+# 创建群组
+@app.route('/create_group', methods=['POST'])
+def create_group():
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        group_name = request.form.get('group_name', '').strip()
+        description = request.form.get('description', '').strip()
+        
+        if not group_name:
+            return jsonify({'success': False, 'message': '群组名称不能为空'})
+        
+        # 创建群组
+        group_id = fuc.create_group(session['username'], group_name, description)
+        
+        if group_id:
+            return jsonify({'success': True, 'message': '创建群组成功', 'group_id': group_id})
+        else:
+            return jsonify({'success': False, 'message': '创建群组失败'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'创建群组时发生错误: {str(e)}'})
+
+# 获取用户群组列表
+@app.route('/user_groups')
+def user_groups():
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        groups = fuc.get_user_groups(session['username'])
+        return jsonify({'success': True, 'data': groups})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'获取群组列表时发生错误: {str(e)}'})
+
+# 获取群组成员
+@app.route('/group_members/<int:group_id>')
+def group_members(group_id):
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        # 检查用户是否是群组成员
+        conn = fuc.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id FROM group_members WHERE group_id = ? AND user_name = ?",
+            (group_id, session['username'])
+        )
+        result = cursor.fetchone()
+        conn.close()
+        
+        if not result:
+            return jsonify({'success': False, 'message': '您不是该群组的成员'})
+        
+        members = fuc.get_group_members(group_id)
+        return jsonify({'success': True, 'data': members})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'获取群组成员时发生错误: {str(e)}'})
+
+# 添加群组成员
+@app.route('/add_group_member', methods=['POST'])
+def add_group_member():
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        group_id = request.form.get('group_id', type=int)
+        user_name = request.form.get('user_name', '').strip()
+        
+        if not group_id or not user_name:
+            return jsonify({'success': False, 'message': '群组ID和用户名不能为空'})
+        
+        # 检查用户是否是群组成员
+        conn = fuc.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT role FROM group_members WHERE group_id = ? AND user_name = ?",
+            (group_id, session['username'])
+        )
+        result = cursor.fetchone()
+        
+        # 只有管理员或创建者可以添加成员
+        if not result or result['role'] not in ['admin', 'creator']:
+            conn.close()
+            return jsonify({'success': False, 'message': '只有管理员可以添加成员'})
+        
+        # 检查要添加的用户是否存在
+        cursor.execute("SELECT s_name FROM users WHERE s_name = ?", (user_name,))
+        user_result = cursor.fetchone()
+        
+        if not user_result:
+            conn.close()
+            return jsonify({'success': False, 'message': '用户不存在'})
+        
+        conn.close()
+        
+        # 添加成员
+        if fuc.add_group_member(group_id, user_name):
+            return jsonify({'success': True, 'message': '添加成员成功'})
+        else:
+            return jsonify({'success': False, 'message': '添加成员失败'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'添加群组成员时发生错误: {str(e)}'})
+
+# 发送群组消息
+@app.route('/send_group_message', methods=['POST'])
+def send_group_message():
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        group_id = request.form.get('group_id', type=int)
+        message = request.form.get('message', '').strip()
+        
+        if not group_id or not message:
+            return jsonify({'success': False, 'message': '群组ID和消息内容不能为空'})
+        
+        # 检查用户是否是群组成员
+        conn = fuc.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id FROM group_members WHERE group_id = ? AND user_name = ?",
+            (group_id, session['username'])
+        )
+        result = cursor.fetchone()
+        conn.close()
+        
+        if not result:
+            return jsonify({'success': False, 'message': '您不是该群组的成员'})
+        
+        # 发送消息
+        if fuc.send_group_message(group_id, session['username'], message):
+            return jsonify({'success': True, 'message': '发送消息成功'})
+        else:
+            return jsonify({'success': False, 'message': '发送消息失败'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'发送群组消息时发生错误: {str(e)}'})
+
+# 获取群组消息
+@app.route('/group_messages/<int:group_id>')
+def group_messages(group_id):
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        # 检查用户是否是群组成员
+        conn = fuc.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id FROM group_members WHERE group_id = ? AND user_name = ?",
+            (group_id, session['username'])
+        )
+        result = cursor.fetchone()
+        conn.close()
+        
+        if not result:
+            return jsonify({'success': False, 'message': '您不是该群组的成员'})
+        
+        messages = fuc.get_group_messages(group_id)
+        return jsonify({'success': True, 'data': messages})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'获取群组消息时发生错误: {str(e)}'})
 
 # 获取聊天用户列表
 @app.route('/chat_users')
@@ -264,25 +512,20 @@ def chat_messages(chat_with_user):
             })
         
         # 添加图片消息
-        for sender, receiver, image_data, image_type, time, is_read in image_messages:
+        for sender, receiver, image_data, image_type, image_size, time, is_read in image_messages:
             try:
-                # 保存图片数据到文件并获取路径
-                image_path = fuc.save_image_data_to_file(image_data, image_type, sender, time)
-                if image_path:
-                    # 生成图片的URL，相对于static目录
-                    # 移除"images/"前缀，因为static目录会自动映射
-                    if image_path.startswith("images/"):
-                        image_url = "/static/" + image_path
-                    else:
-                        image_url = "/static/images/" + os.path.basename(image_path)
-                    all_messages.append({
-                        'type': 'image',
-                        'sender': sender,
-                        'receiver': receiver,
-                        'content': image_url,
-                        'time': time,
-                        'is_read': is_read
-                    })
+                # 将图片数据转换为base64编码的URL
+                import base64
+                image_base64 = base64.b64encode(image_data).decode('utf-8')
+                image_url = f"data:image/{image_type};base64,{image_base64}"
+                all_messages.append({
+                    'type': 'image',
+                    'sender': sender,
+                    'receiver': receiver,
+                    'content': image_url,
+                    'time': time,
+                    'is_read': is_read
+                })
             except Exception as e:
                 print(f"处理图片消息时发生错误: {str(e)}")
                 # 即使单个图片消息处理失败，也不影响其他消息
@@ -328,36 +571,30 @@ def send_private_image():
     image_file = request.files['image']
     if image_file.filename == '':
         return jsonify({'success': False, 'message': '没有选择图片'})
-    destination_path = None # 初始化 destination_path
+    
     try:
-        # 创建图片存储目录
-        image_dir = os.path.join(app.root_path, 'static', 'images')
-        if not os.path.exists(image_dir):
-            os.makedirs(image_dir)
-        
-        # 生成唯一的文件名
-        import uuid
+        # 保存图片到临时文件
+        import tempfile
         import datetime
         timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-        unique_filename = f"{uuid.uuid4().hex}_{timestamp}{os.path.splitext(image_file.filename)[1]}"
-        destination_path = os.path.join(image_dir, unique_filename)
-        
-        # 保存图片到static/images目录
-        image_file.save(destination_path)
+        temp_dir = tempfile.gettempdir()
+        temp_filename = f"temp_image_{timestamp}{os.path.splitext(image_file.filename)[1]}"
+        temp_path = os.path.join(temp_dir, temp_filename)
+        image_file.save(temp_path)
         
         # 保存图片消息到数据库
-        full_image_path = os.path.join('images', unique_filename)
-        if fuc.send_private_image_message(session['username'], receiver_name, destination_path):
+        if fuc.send_private_image_message(session['username'], receiver_name, temp_path):
+            # 删除临时文件
+            os.remove(temp_path)
             return jsonify({'success': True, 'message': '发送成功'})
         else:
-            # 如果保存数据库失败，删除已保存的图片文件
-            if destination_path and os.path.exists(destination_path): # 检查 destination_path 是否已赋值
-                os.remove(destination_path)
+            # 删除临时文件
+            os.remove(temp_path)
             return jsonify({'success': False, 'message': '发送失败'})
     except Exception as e:
-        # 删除可能已保存的图片文件
-        if destination_path and os.path.exists(destination_path): # 检查 destination_path 是否已赋值
-            os.remove(destination_path)
+        # 删除可能已保存的临时文件
+        if 'temp_path' in locals() and os.path.exists(temp_path):
+            os.remove(temp_path)
         return jsonify({'success': False, 'message': f'发送图片时发生错误: {str(e)}'})
 
 # 退出登录
@@ -414,7 +651,202 @@ def download_program():
     
     return send_file(zip_path, as_attachment=True, download_name=zip_filename)
 
+# 朋友圈页面
+@app.route('/moments')
+def moments():
+    if 'username' not in session:
+        return redirect(url_for('login'))
+    return render_template('moments.html', user_info=session['user_info'])
+
+# 发布朋友圈
+@app.route('/post_moment', methods=['POST'])
+def post_moment():
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        content = request.form.get('content', '')[:200]  # 限制200字
+        # content = "test"  # 限制200字
+        print(content)
+        image_path = None
+        
+        # 处理上传的图片（只允许一张图片）
+        if 'image' in request.files:
+            image = request.files['image']
+            if image and image.filename != '':
+                # 创建图片存储目录
+                image_dir = os.path.join(app.root_path, 'static', 'moments')
+                if not os.path.exists(image_dir):
+                    os.makedirs(image_dir)
+                
+                # 生成唯一的文件名
+                import uuid
+                timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+                unique_filename = f"{uuid.uuid4().hex}_{timestamp}{os.path.splitext(image.filename)[1]}"
+                destination_path = os.path.join(image_dir, unique_filename)
+                
+                # 保存图片
+                image.save(destination_path)
+                
+                # 保存相对路径
+                image_path = os.path.join('moments', unique_filename)
+        
+        # 保存到数据库
+        conn = fuc.get_db_connection()
+        cursor = conn.cursor()
+        d = datetime.datetime.today()
+        cursor.execute(
+            "INSERT INTO moments(user_name, content, image_paths, post_time) VALUES (?, ?, ?, ?)",
+            (session['username'], content, image_path, d.strftime("%Y-%m-%d %H:%M:%S"))
+        )
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'success': True, 'message': '发布成功'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'发布失败: {str(e)}'})
+
+# 获取朋友圈列表
+@app.route('/get_moments')
+def get_moments():
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        conn = fuc.get_db_connection()
+        cursor = conn.cursor()
+        
+        # 获取所有朋友圈，按时间倒序排列
+        cursor.execute("""
+            SELECT m.id, m.user_name, m.content, m.image_paths, m.post_time, u.s_phone_num, u.s_sex, u.place
+            FROM moments m
+            JOIN users u ON m.user_name = u.s_name
+            ORDER BY m.post_time DESC
+            LIMIT 50
+        """)
+        
+        moments_data = []
+        for row in cursor.fetchall():
+            # 获取评论
+            cursor.execute("""
+                SELECT mc.user_name, mc.comment, mc.comment_time, u.s_phone_num, u.s_sex, u.place
+                FROM moment_comments mc
+                JOIN users u ON mc.user_name = u.s_name
+                WHERE mc.moment_id = ?
+                ORDER BY mc.comment_time ASC
+            """, (row[0],))
+            
+            comments = []
+            for comment_row in cursor.fetchall():
+                comments.append({
+                    'user_name': comment_row[0],
+                    'comment': comment_row[1],
+                    'comment_time': comment_row[2],
+                    'user_info': {
+                        'phone': comment_row[3],
+                        'sex': comment_row[4],
+                        'place': comment_row[5]
+                    }
+                })
+            
+            # 获取点赞数和当前用户是否已点赞
+            cursor.execute("SELECT COUNT(*) FROM moment_likes WHERE moment_id = ?", (row[0],))
+            like_count = cursor.fetchone()[0]
+            
+            cursor.execute("SELECT COUNT(*) FROM moment_likes WHERE moment_id = ? AND user_name = ?", (row[0], session['username']))
+            user_liked = cursor.fetchone()[0] > 0
+            
+            # 处理图片路径
+            image_path = row[3]  # image_paths字段现在是单个路径而不是数组
+            
+            moments_data.append({
+                'id': row[0],
+                'user_name': row[1],
+                'content': row[2],
+                'image_paths': image_path,  # 使用单个路径而不是数组
+                'post_time': row[4],
+                'user_info': {
+                    'phone': row[5],
+                    'sex': row[6],
+                    'place': row[7]
+                },
+                'comments': comments,
+                'like_count': like_count,
+                'user_liked': user_liked
+            })
+        
+        conn.close()
+        return jsonify({'success': True, 'data': moments_data})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'获取朋友圈失败: {str(e)}'})
+
+# 点赞朋友圈
+@app.route('/like_moment', methods=['POST'])
+def like_moment():
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        moment_id = request.form.get('moment_id')
+        if not moment_id:
+            return jsonify({'success': False, 'message': '参数错误'})
+        
+        conn = fuc.get_db_connection()
+        cursor = conn.cursor()
+        
+        # 检查是否已经点赞
+        cursor.execute("SELECT id FROM moment_likes WHERE moment_id = ? AND user_name = ?", (moment_id, session['username']))
+        existing_like = cursor.fetchone()
+        
+        if existing_like:
+            # 取消点赞
+            cursor.execute("DELETE FROM moment_likes WHERE id = ?", (existing_like[0],))
+            action = 'unlike'
+        else:
+            # 点赞
+            d = datetime.datetime.today()
+            cursor.execute("INSERT INTO moment_likes(moment_id, user_name, like_time) VALUES (?, ?, ?)", 
+                          (moment_id, session['username'], d.strftime("%Y-%m-%d %H:%M:%S")))
+            action = 'like'
+        
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'success': True, 'action': action})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'操作失败: {str(e)}'})
+
+# 评论朋友圈
+@app.route('/comment_moment', methods=['POST'])
+def comment_moment():
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        moment_id = request.form.get('moment_id')
+        comment = request.form.get('comment', '')[:200]  # 限制200字
+        
+        if not moment_id or not comment:
+            return jsonify({'success': False, 'message': '参数错误'})
+        
+        conn = fuc.get_db_connection()
+        cursor = conn.cursor()
+        
+        # 添加评论
+        d = datetime.datetime.today()
+        cursor.execute("INSERT INTO moment_comments(moment_id, user_name, comment, comment_time) VALUES (?, ?, ?, ?)", 
+                      (moment_id, session['username'], comment, d.strftime("%Y-%m-%d %H:%M:%S")))
+        
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'success': True, 'message': '评论成功'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'评论失败: {str(e)}'})
+
 if __name__ == '__main__':
+    import dotenv
+    dotenv.load_dotenv("../.env")  # 从 .env 文件加载环境变量
     APP_IP = os.getenv('APP_IP', '127.0.0.1')  # 默认值
     APP_PORT = int(os.getenv('APP_PORT', 5000)) # 默认值
     app.run(debug=True, host=APP_IP, port=APP_PORT)

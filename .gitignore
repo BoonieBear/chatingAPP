@@ -1,4 +1,7 @@
 .env
-.jpeg
 abc.sql
 __pycache__/fuc.cpython-311.pyc
+web_version_of_messages/static/images/*
+web_version_of_messages/static/drifting_bottle_v2.0.zip
+chat.db
+web_version_of_messages/static/moments/*
