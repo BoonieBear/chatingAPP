@@ -205,7 +205,7 @@ class LoginWidget(QWidget):
         try:
             # 模拟登录过程
             with fuc.connection.cursor() as cursor:
-                sql = 'SELECT s_name,s_phone_num,s_sex,place,password FROM users WHERE s_name = ?'
+                sql = 'SELECT s_name,s_phone_num,s_sex,place,password FROM users WHERE s_name = %s'
                 cursor.execute(sql, [username])
                 resultset = cursor.fetchall()
                 if len(resultset) == 0:
@@ -1507,7 +1507,7 @@ class ReceiveMessageDialog(QDialog):
                     is_persistent = resultset[pos][3] if len(resultset[pos]) > 3 else 0
                     
                     # 获取用户信息
-                    sql = 'SELECT s_name,s_phone_num,s_sex,place,password FROM users WHERE s_name = ?'
+                    sql = 'SELECT s_name,s_phone_num,s_sex,place,password FROM users WHERE s_name = %s'
                     cursor.execute(sql, [name])
                     user_result = cursor.fetchall()
                     
