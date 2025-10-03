@@ -51,6 +51,8 @@ def login():
                         'place': resultset[0][3]
                     }
                     conn.close()
+                    # 更新用户在线状态
+                    fuc.update_user_status(username, True)
                     return redirect(url_for('main'))
                 else:
                     flash('密码不正确！', 'error')
@@ -493,43 +495,62 @@ def chat_messages(chat_with_user):
         return jsonify({'success': False, 'message': '未登录'})
     
     try:
-        # 获取文本消息和图片消息
+        # 获取文本消息、图片消息和文件消息
         text_messages = fuc.get_private_messages(session['username'], chat_with_user)
         image_messages = fuc.get_private_image_messages(session['username'], chat_with_user)
+        file_messages = fuc.get_shared_files(session['username'], chat_with_user)
         
         # 合并消息
         all_messages = []
         
         # 添加文本消息
-        for sender, receiver, message, time, is_read in text_messages:
+        for msg_id, sender, receiver, message, time, is_read, is_withdrawn in text_messages:
             all_messages.append({
+                'id': msg_id,
                 'type': 'text',
                 'sender': sender,
                 'receiver': receiver,
                 'content': message,
                 'time': time,
-                'is_read': is_read
+                'is_read': is_read,
+                'is_withdrawn': is_withdrawn
             })
         
         # 添加图片消息
-        for sender, receiver, image_data, image_type, image_size, time, is_read in image_messages:
+        for msg_id, sender, receiver, image_data, image_type, image_size, time, is_read, is_withdrawn in image_messages:
             try:
                 # 将图片数据转换为base64编码的URL
                 import base64
                 image_base64 = base64.b64encode(image_data).decode('utf-8')
                 image_url = f"data:image/{image_type};base64,{image_base64}"
                 all_messages.append({
+                    'id': msg_id,
                     'type': 'image',
                     'sender': sender,
                     'receiver': receiver,
                     'content': image_url,
                     'time': time,
-                    'is_read': is_read
+                    'is_read': is_read,
+                    'is_withdrawn': is_withdrawn
                 })
             except Exception as e:
                 print(f"处理图片消息时发生错误: {str(e)}")
                 # 即使单个图片消息处理失败，也不影响其他消息
                 continue
+        
+        # 添加文件消息
+        for file in file_messages:
+            all_messages.append({
+                'id': file['id'],
+                'type': 'file',
+                'sender': file['sender_name'],
+                'receiver': file['receiver_name'],
+                'content': file['file_name'],
+                'time': file['send_time'],
+                'is_read': file['is_read'],
+                'is_withdrawn': False,
+                'file_size': file['file_size']
+            })
         
         # 按时间排序
         all_messages.sort(key=lambda x: x['time'])
@@ -552,6 +573,13 @@ def send_private_message():
     
     try:
         if fuc.send_private_message(session['username'], receiver_name, message):
+            # 创建通知
+            fuc.create_notification(
+                receiver_name,
+                'message',
+                f'来自 {session["username"]} 的消息',
+                f'{session["username"]} 向您发送了一条消息'
+            )
             return jsonify({'success': True, 'message': '发送成功'})
         else:
             return jsonify({'success': False, 'message': '发送失败'})
@@ -586,6 +614,13 @@ def send_private_image():
         if fuc.send_private_image_message(session['username'], receiver_name, temp_path):
             # 删除临时文件
             os.remove(temp_path)
+            # 创建通知
+            fuc.create_notification(
+                receiver_name,
+                'message',
+                f'来自 {session["username"]} 的图片',
+                f'{session["username"]} 向您发送了一张图片'
+            )
             return jsonify({'success': True, 'message': '发送成功'})
         else:
             # 删除临时文件
@@ -600,8 +635,37 @@ def send_private_image():
 # 退出登录
 @app.route('/logout')
 def logout():
+    # 更新用户在线状态
+    if 'username' in session:
+        fuc.update_user_status(session['username'], False)
     session.clear()
     return redirect(url_for('login'))
+
+# 通知中心页面
+@app.route('/notifications')
+def notifications_page():
+    if 'username' not in session:
+        return redirect(url_for('login'))
+    
+    try:
+        unread_count = fuc.get_unread_notifications_count(session['username'])
+        return render_template('notifications.html', user_info=session['user_info'], unread_count=unread_count)
+    except Exception as e:
+        flash(f'获取通知数量时发生错误: {str(e)}', 'error')
+        return redirect(url_for('main'))
+
+# 个人资料页面
+@app.route('/profile')
+def profile_page():
+    if 'username' not in session:
+        return redirect(url_for('login'))
+    
+    try:
+        profile = fuc.get_user_profile(session['username'])
+        return render_template('profile.html', user_info=session['user_info'], profile=profile)
+    except Exception as e:
+        flash(f'获取个人资料时发生错误: {str(e)}', 'error')
+        return redirect(url_for('main'))
 
 # 关于页面
 @app.route('/about')
@@ -843,6 +907,399 @@ def comment_moment():
         return jsonify({'success': True, 'message': '评论成功'})
     except Exception as e:
         return jsonify({'success': False, 'message': f'评论失败: {str(e)}'})
+
+# 用户在线状态相关路由
+@app.route('/update_user_status', methods=['POST'])
+def update_user_status():
+    """更新用户在线状态"""
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        is_online = request.form.get('is_online', '1') == '1'
+        
+        if fuc.update_user_status(session['username'], is_online):
+            return jsonify({'success': True, 'message': '状态更新成功'})
+        else:
+            return jsonify({'success': False, 'message': '状态更新失败'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'更新状态时发生错误: {str(e)}'})
+
+@app.route('/get_user_status/<username>')
+def get_user_status(username):
+    """获取用户在线状态"""
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        status = fuc.get_user_status(username)
+        return jsonify({'success': True, 'data': status})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'获取用户状态时发生错误: {str(e)}'})
+
+@app.route('/get_online_users')
+def get_online_users():
+    """获取在线用户列表"""
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        online_users = fuc.get_online_users()
+        return jsonify({'success': True, 'data': online_users})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'获取在线用户时发生错误: {str(e)}'})
+
+# 通知相关路由
+@app.route('/get_notifications')
+def get_notifications():
+    """获取用户通知"""
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        limit = request.args.get('limit', 20, type=int)
+        notifications = fuc.get_user_notifications(session['username'], limit)
+        return jsonify({'success': True, 'data': notifications})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'获取通知时发生错误: {str(e)}'})
+
+@app.route('/mark_notification_read', methods=['POST'])
+def mark_notification_read():
+    """标记通知为已读"""
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        notification_id = request.form.get('notification_id', type=int)
+        
+        if not notification_id:
+            return jsonify({'success': False, 'message': '参数错误'})
+        
+        if fuc.mark_notification_as_read(notification_id):
+            return jsonify({'success': True, 'message': '标记成功'})
+        else:
+            return jsonify({'success': False, 'message': '标记失败'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'标记通知时发生错误: {str(e)}'})
+
+@app.route('/get_unread_notifications_count')
+def get_unread_notifications_count():
+    """获取未读通知数量"""
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        count = fuc.get_unread_notifications_count(session['username'])
+        return jsonify({'success': True, 'data': count})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'获取未读通知数量时发生错误: {str(e)}'})
+
+# 个人资料相关路由
+@app.route('/get_user_profile')
+def get_user_profile():
+    """获取用户个人资料"""
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        profile = fuc.get_user_profile(session['username'])
+        return jsonify({'success': True, 'data': profile})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'获取个人资料时发生错误: {str(e)}'})
+
+@app.route('/update_user_profile', methods=['POST'])
+def update_user_profile():
+    """更新用户个人资料"""
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        # 获取表单数据
+        bio = request.form.get('bio', '')
+        birth_date = request.form.get('birth_date', '')
+        theme_preference = request.form.get('theme_preference', 'light')
+        notification_enabled = request.form.get('notification_enabled', '1') == '1'
+        
+        # 处理头像上传
+        avatar_path = None
+        if 'avatar' in request.files:
+            avatar = request.files['avatar']
+            if avatar and avatar.filename != '':
+                # 创建头像存储目录
+                avatar_dir = os.path.join(app.root_path, 'static', 'avatars')
+                if not os.path.exists(avatar_dir):
+                    os.makedirs(avatar_dir)
+                
+                # 生成唯一的文件名
+                import uuid
+                timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+                unique_filename = f"{uuid.uuid4().hex}_{timestamp}{os.path.splitext(avatar.filename)[1]}"
+                destination_path = os.path.join(avatar_dir, unique_filename)
+                
+                # 保存头像
+                avatar.save(destination_path)
+                
+                # 保存相对路径
+                avatar_path = os.path.join('avatars', unique_filename)
+        
+        # 更新个人资料
+        if fuc.create_or_update_user_profile(
+            session['username'], 
+            avatar_path=avatar_path,
+            bio=bio if bio else None,
+            birth_date=birth_date if birth_date else None,
+            theme_preference=theme_preference,
+            notification_enabled=notification_enabled
+        ):
+            return jsonify({'success': True, 'message': '更新成功'})
+        else:
+            return jsonify({'success': False, 'message': '更新失败'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'更新个人资料时发生错误: {str(e)}'})
+
+# 文件分享相关路由
+@app.route('/send_file', methods=['POST'])
+def send_file():
+    """发送文件"""
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        receiver_name = request.form.get('receiver')
+        if 'file' not in request.files:
+            return jsonify({'success': False, 'message': '没有上传文件'})
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'success': False, 'message': '没有选择文件'})
+        
+        # 创建文件存储目录
+        file_dir = os.path.join(app.root_path, 'static', 'shared_files')
+        if not os.path.exists(file_dir):
+            os.makedirs(file_dir)
+        
+        # 生成唯一的文件名
+        import uuid
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        unique_filename = f"{uuid.uuid4().hex}_{timestamp}{os.path.splitext(file.filename)[1]}"
+        destination_path = os.path.join(file_dir, unique_filename)
+        
+        # 保存文件
+        file.save(destination_path)
+        
+        # 获取文件信息
+        file_size = os.path.getsize(destination_path)
+        file_type = os.path.splitext(file.filename)[1].lower()
+        
+        # 保存文件信息到数据库
+        file_id = fuc.save_shared_file(
+            session['username'],
+            receiver_name,
+            file.filename,
+            os.path.join('shared_files', unique_filename),
+            file_size,
+            file_type
+        )
+        
+        if file_id:
+            # 创建通知
+            fuc.create_notification(
+                receiver_name,
+                'file',
+                f'来自 {session["username"]} 的文件',
+                f'{session["username"]} 向您发送了一个文件: {file.filename}'
+            )
+            
+            return jsonify({'success': True, 'message': '发送成功'})
+        else:
+            # 删除已保存的文件
+            if os.path.exists(destination_path):
+                os.remove(destination_path)
+            return jsonify({'success': False, 'message': '发送失败'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'发送文件时发生错误: {str(e)}'})
+
+@app.route('/get_shared_files')
+def get_shared_files():
+    """获取分享的文件"""
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        with_user = request.args.get('with_user')
+        files = fuc.get_shared_files(session['username'], with_user)
+        return jsonify({'success': True, 'data': files})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'获取分享文件时发生错误: {str(e)}'})
+
+@app.route('/download_file/<int:file_id>')
+def download_file(file_id):
+    """下载分享的文件"""
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        # 获取文件信息
+        files = fuc.get_shared_files(session['username'])
+        file_info = None
+        
+        for file in files:
+            if file['id'] == file_id:
+                file_info = file
+                break
+        
+        if not file_info:
+            return jsonify({'success': False, 'message': '文件不存在或无权限访问'})
+        
+        # 标记文件为已读
+        fuc.mark_file_as_read(file_id)
+        
+        # 构建文件路径
+        file_path = os.path.join(app.root_path, 'static', file_info['file_path'])
+        
+        if not os.path.exists(file_path):
+            return jsonify({'success': False, 'message': '文件不存在'})
+        
+        # 返回文件
+        return send_file(file_path, as_attachment=True, download_name=file_info['file_name'])
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'下载文件时发生错误: {str(e)}'})
+
+# 消息撤回相关路由
+@app.route('/withdraw_message', methods=['POST'])
+def withdraw_message():
+    """撤回消息"""
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        message_id = request.form.get('message_id', type=int)
+        message_type = request.form.get('message_type', 'text')
+        
+        if not message_id or message_type not in ['text', 'image']:
+            return jsonify({'success': False, 'message': '参数错误'})
+        
+        success = False
+        if message_type == 'text':
+            success = fuc.withdraw_text_message(message_id, session['username'])
+        elif message_type == 'image':
+            success = fuc.withdraw_image_message(message_id, session['username'])
+        
+        if success:
+            return jsonify({'success': True, 'message': '撤回成功'})
+        else:
+            return jsonify({'success': False, 'message': '撤回失败'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'撤回消息时发生错误: {str(e)}'})
+
+# 设置用户主题
+@app.route('/set_theme', methods=['POST'])
+def set_theme():
+    """设置用户主题"""
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        theme = request.form.get('theme', 'light')
+        if theme not in ['light', 'dark', 'auto']:
+            return jsonify({'success': False, 'message': '无效的主题'})
+        
+        # 更新用户主题偏好
+        fuc.create_or_update_user_profile(
+            session['username'],
+            theme_preference=theme
+        )
+        
+        return jsonify({'success': True, 'message': '主题设置成功'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'设置主题时发生错误: {str(e)}'})
+
+# 定时检查未读消息并发送通知
+def check_unread_messages():
+    """检查所有用户的未读消息并发送通知"""
+    try:
+        conn = fuc.get_db_connection()
+        cursor = conn.cursor()
+        
+        # 获取所有用户
+        cursor.execute("SELECT s_name FROM users")
+        users = cursor.fetchall()
+        
+        for user in users:
+            username = user['s_name']
+            
+            # 检查未读文本消息
+            cursor.execute('''
+                SELECT COUNT(*) as count, sender_name 
+                FROM private_text_messages 
+                WHERE receiver_name = ? AND is_read = 0
+                GROUP BY sender_name
+            ''', (username,))
+            unread_text = cursor.fetchall()
+            
+            # 检查未读图片消息
+            cursor.execute('''
+                SELECT COUNT(*) as count, sender_name 
+                FROM private_image_messages 
+                WHERE receiver_name = ? AND is_read = 0
+                GROUP BY sender_name
+            ''', (username,))
+            unread_image = cursor.fetchall()
+            
+            # 检查未读文件
+            cursor.execute('''
+                SELECT COUNT(*) as count, sender_name 
+                FROM shared_files 
+                WHERE receiver_name = ? AND is_read = 0
+                GROUP BY sender_name
+            ''', (username,))
+            unread_files = cursor.fetchall()
+            
+            # 创建通知
+            for sender in unread_text:
+                fuc.create_notification(
+                    username,
+                    'message',
+                    f'来自 {sender["sender_name"]} 的消息',
+                    f'您有 {sender["count"]} 条来自 {sender["sender_name"]} 的未读文本消息'
+                )
+            
+            for sender in unread_image:
+                fuc.create_notification(
+                    username,
+                    'message',
+                    f'来自 {sender["sender_name"]} 的图片',
+                    f'您有 {sender["count"]} 张来自 {sender["sender_name"]} 的未读图片'
+                )
+            
+            for sender in unread_files:
+                fuc.create_notification(
+                    username,
+                    'file',
+                    f'来自 {sender["sender_name"]} 的文件',
+                    f'您有 {sender["count"]} 个来自 {sender["sender_name"]} 的未读文件'
+                )
+        
+        conn.close()
+    except Exception as e:
+        print(f"检查未读消息时发生错误: {str(e)}")
+
+import threading
+import time
+
+# 定时检查未读消息的线程
+def notification_thread():
+    """定时检查未读消息的线程函数"""
+    while True:
+        try:
+            time.sleep(60)  # 每分钟检查一次
+            check_unread_messages()
+        except Exception as e:
+            print(f"检查未读消息时发生错误: {str(e)}")
+
+# 启动通知线程
+notification_thread_obj = threading.Thread(target=notification_thread, daemon=True)
+notification_thread_obj.start()
 
 if __name__ == '__main__':
     import dotenv

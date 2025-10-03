@@ -111,6 +111,9 @@
                         <button class="btn btn-success" type="button" id="sendImageBtn" disabled>
                             <i class="fas fa-image"></i> 发图
                         </button>
+                        <button class="btn btn-info" type="button" id="sendFileBtn" disabled>
+                            <i class="fas fa-file"></i> 发文件
+                        </button>
                         <button class="btn btn-primary" type="button" id="sendMessageBtn" disabled>
                             <i class="fas fa-paper-plane"></i> 发送
                         </button>
@@ -199,6 +202,39 @@
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
                 <button type="button" class="btn btn-success" id="sendImageSubmit">发送</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 发送文件模态框 -->
+<div class="modal fade" id="sendFileModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-info text-white">
+                <h5 class="modal-title"><i class="fas fa-file"></i> 发送文件</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="sendFileForm" enctype="multipart/form-data">
+                    <input type="hidden" id="fileReceiver" name="receiver">
+                    <div class="mb-3">
+                        <label for="fileInput" class="form-label">选择文件</label>
+                        <input class="form-control" type="file" id="fileInput" name="file">
+                    </div>
+                    <div class="mb-3" id="filePreviewContainer" style="display: none;">
+                        <label class="form-label">文件信息</label>
+                        <div class="alert alert-info">
+                            <div><strong>文件名:</strong> <span id="fileName"></span></div>
+                            <div><strong>文件大小:</strong> <span id="fileSize"></span></div>
+                            <div><strong>文件类型:</strong> <span id="fileType"></span></div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-info" id="sendFileSubmit">发送</button>
             </div>
         </div>
     </div>
@@ -421,6 +457,18 @@
             $('#sendImageModal').modal('show');
         });
         
+        // 发送文件按钮点击事件
+        $('#sendFileBtn').click(function() {
+            if (currentGroupId) {
+                // 群组聊天不支持发送文件（可以扩展实现）
+                alert('群组聊天暂不支持发送文件');
+                return;
+            }
+            
+            if (!currentChatUser) return;
+            sendFile(currentChatUser);
+        });
+        
         // 图片文件选择事件
         $('#imageFile').change(function() {
             const file = this.files[0];
@@ -456,6 +504,43 @@
                 },
                 error: function() {
                     alert('发送图片时发生错误');
+                }
+            });
+        });
+        
+        // 文件选择事件
+        $('#fileInput').change(function() {
+            const file = this.files[0];
+            if (file) {
+                $('#fileName').text(file.name);
+                $('#fileSize').text(formatFileSize(file.size));
+                $('#fileType').text(file.type || '未知类型');
+                $('#filePreviewContainer').show();
+            } else {
+                $('#filePreviewContainer').hide();
+            }
+        });
+        
+        // 发送文件提交事件
+        $('#sendFileSubmit').click(function() {
+            const formData = new FormData($('#sendFileForm')[0]);
+            
+            $.ajax({
+                url: '/send_file',
+                type: 'POST',
+                data: formData,
+                processData: false,
+                contentType: false,
+                success: function(data) {
+                    if (data.success) {
+                        $('#sendFileModal').modal('hide');
+                        loadChatMessages(); // 重新加载消息
+                    } else {
+                        alert(data.message);
+                    }
+                },
+                error: function() {
+                    alert('发送文件时发生错误');
                 }
             });
         });
@@ -537,19 +622,36 @@
             if (data.success) {
                 let html = '';
                 if (data.data.length > 0) {
-                    data.data.forEach(function(user) {
-                        html += `<li class="list-group-item d-flex justify-content-between align-items-center" 
-                                  style="cursor: pointer;" onclick="openChat('${user.name}')">
-                                    <span>${user.name}</span>
-                                    ${user.has_unread ? '<span class="badge bg-danger rounded-pill">新消息</span>' : ''}
-                                </li>`;
+                    // 获取在线用户列表
+                    $.get('/get_online_users', function(onlineData) {
+                        if (onlineData.success) {
+                            const onlineUsers = onlineData.data;
+                            
+                            data.data.forEach(function(user) {
+                                const isOnline = onlineUsers.includes(user.name);
+                                const statusIcon = isOnline ? 
+                                    '<i class="fas fa-circle text-success me-2" title="在线"></i>' : 
+                                    '<i class="fas fa-circle text-secondary me-2" title="离线"></i>';
+                                
+                                html += `<li class="list-group-item d-flex justify-content-between align-items-center" 
+                                          style="cursor: pointer;" onclick="openChat('${user.name}')">
+                                            <div>
+                                                ${statusIcon}
+                                                <span>${user.name}</span>
+                                            </div>
+                                            ${user.has_unread ? '<span class="badge bg-danger rounded-pill">新消息</span>' : ''}
+                                        </li>`;
+                            });
+                            
+                            $('#chatUserList').html(html);
+                        }
                     });
                 } else {
                     html = `<li class="list-group-item text-center text-muted">
                         <i class="fas fa-comment-slash"></i> 暂无聊天记录
                     </li>`;
+                    $('#chatUserList').html(html);
                 }
-                $('#chatUserList').html(html);
             }
         });
     }
@@ -563,9 +665,28 @@
         $('#messageInput').prop('disabled', false);
         $('#sendMessageBtn').prop('disabled', false);
         $('#sendImageBtn').prop('disabled', false);
+        $('#sendFileBtn').prop('disabled', false);
         
-        // 更新聊天窗口标题（使用更具体的选择器，选择第二个匹配的元素）
-        $('.card-header.bg-info.text-white h5').eq(1).html(`<i class="fas fa-comment-dots"></i> 私聊：${username}`);
+        // 获取用户在线状态并更新聊天窗口标题
+        $.get(`/get_user_status/${username}`, function(data) {
+            if (data.success) {
+                const statusInfo = data.data;
+                const statusIcon = statusInfo.is_online ? 
+                    '<i class="fas fa-circle text-success"></i>' : 
+                    '<i class="fas fa-circle text-secondary"></i>';
+                const statusText = statusInfo.is_online ? '在线' : '离线';
+                const lastSeen = statusInfo.last_seen ? `，最后上线: ${statusInfo.last_seen}` : '';
+                
+                // 更新聊天窗口标题（使用更具体的选择器，选择第二个匹配的元素）
+                $('.card-header.bg-info.text-white h5').eq(1).html(
+                    `<i class="fas fa-comment-dots"></i> 私聊：${username} 
+                     <small class="ms-2">${statusIcon} ${statusText}${lastSeen}</small>`
+                );
+            } else {
+                // 更新聊天窗口标题（使用更具体的选择器，选择第二个匹配的元素）
+                $('.card-header.bg-info.text-white h5').eq(1).html(`<i class="fas fa-comment-dots"></i> 私聊：${username}`);
+            }
+        });
         
         // 加载聊天记录
         loadChatMessages();
@@ -603,18 +724,37 @@
                 const messageClass = isSent ? 'sent-message' : 'received-message';
                 const alignment = isSent ? 'text-end' : 'text-start';
                 
-                html += `<div class="mb-3 ${alignment}">
+                // 检查消息是否被撤回
+                if (msg.is_withdrawn) {
+                    html += `<div class="mb-3 text-center">
+                        <div class="text-muted small">
+                            <i class="fas fa-info-circle"></i> 消息已被撤回
+                        </div>
+                    </div>`;
+                    return;
+                }
+                
+                html += `<div class="mb-3 ${alignment} message-container" data-message-id="${msg.id}" data-message-type="${msg.type}">
                     <div class="message-bubble ${messageClass}">`;
                 
                 if (msg.type === 'text') {
-                    html += `<div>${msg.content}</div>`;
-                } else {
+                    html += `<div class="message-content">${msg.content}</div>`;
+                } else if (msg.type === 'image') {
                     html += `<img src="${msg.content}" class="img-fluid rounded" style="max-width: 300px;" alt="图片消息">`;
+                } else if (msg.type === 'file') {
+                    html += `<div class="d-flex align-items-center file-message" data-file-id="${msg.id}">
+                        <i class="fas fa-file me-2 text-primary"></i>
+                        <div>
+                            <div><a href="/download_file/${msg.id}" class="file-download-link text-decoration-none text-primary fw-bold" download="${msg.content}">${msg.content}</a></div>
+                            <small class="text-muted">${msg.file_size ? formatFileSize(msg.file_size) : ''}</small>
+                        </div>
+                    </div>`;
                 }
                 
-                html += `<div class="small mt-1">
+                html += `<div class="small mt-1 message-meta">
                             <span>${msg.time}</span>
                             ${isSent ? `<span class="ms-2">${msg.is_read ? '<i class="fas fa-check-double text-success"></i>' : '<i class="fas fa-check text-muted"></i>'}</span>` : ''}
+                            ${isSent ? `<span class="ms-2 withdraw-btn" style="cursor: pointer;" title="撤回消息"><i class="fas fa-undo text-muted"></i></span>` : ''}
                         </div>
                     </div>
                 </div>`;
@@ -626,6 +766,39 @@
         }
         
         $('#chatContainer').html(html);
+        
+        // 绑定撤回按钮事件
+        $('.withdraw-btn').click(function() {
+            const messageContainer = $(this).closest('.message-container');
+            const messageId = messageContainer.data('message-id');
+            const messageType = messageContainer.data('message-type');
+            
+            if (confirm('确定要撤回这条消息吗？')) {
+                withdrawMessage(messageId, messageType);
+            }
+        });
+        
+        // 绑定文件下载事件
+        $('.file-download-link').click(function(e) {
+            e.preventDefault();
+            const fileMessage = $(this).closest('.file-message');
+            const fileId = fileMessage.data('file-id');
+            const fileName = $(this).attr('download');
+            
+            if (fileId) {
+                // 直接使用window.location.href下载文件，这样更可靠
+                const downloadUrl = `/download_file/${fileId}`;
+                
+                // 创建一个临时链接来触发下载
+                const a = document.createElement('a');
+                a.href = downloadUrl;
+                a.download = fileName;
+                a.style.display = 'none';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            }
+        });
         
         // 只有在有新消息时才滚动到底部
         if (scrollToBottom) {
@@ -739,6 +912,7 @@
         $('#messageInput').prop('disabled', false);
         $('#sendMessageBtn').prop('disabled', false);
         $('#sendImageBtn').prop('disabled', false);
+        $('#sendFileBtn').prop('disabled', false);
         
         // 更新聊天窗口标题（使用更具体的选择器，选择第二个匹配的元素）
         $('.card-header.bg-info.text-white h5').eq(1).html(`<i class="fas fa-comment-dots"></i> 群组聊天: ${groupName} <button class="btn btn-sm btn-info float-end" onclick="showGroupMembers(${groupId})"><i class="fas fa-users"></i> 成员</button>`);
@@ -901,6 +1075,39 @@
                 }
             });
         }
+    }
+    
+    // 撤回消息
+    function withdrawMessage(messageId, messageType) {
+        $.post('/withdraw_message', {
+            message_id: messageId,
+            message_type: messageType
+        }, function(data) {
+            if (data.success) {
+                loadChatMessages(); // 重新加载消息
+            } else {
+                alert(data.message);
+            }
+        });
+    }
+    
+    // 格式化文件大小
+    function formatFileSize(bytes) {
+        if (bytes === 0) return '0 Bytes';
+        
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+    
+    // 发送文件
+    function sendFile(receiver) {
+        $('#fileReceiver').val(receiver);
+        $('#fileInput').val('');
+        $('#filePreviewContainer').hide();
+        $('#sendFileModal').modal('show');
     }
     
     // 添加全局变量

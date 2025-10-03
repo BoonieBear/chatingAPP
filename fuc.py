@@ -361,9 +361,9 @@ def get_private_messages(user_name, chat_with_name):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # 获取所有相关的私聊消息，包括已读状态
+        # 获取所有相关的私聊消息，包括已读状态和撤回状态
         cursor.execute('''
-            SELECT sender_name, receiver_name, message, send_time, is_read 
+            SELECT id, sender_name, receiver_name, message, send_time, is_read, is_withdrawn 
             FROM private_text_messages 
             WHERE (sender_name = ? AND receiver_name = ?) 
             OR (sender_name = ? AND receiver_name = ?)
@@ -372,18 +372,18 @@ def get_private_messages(user_name, chat_with_name):
         
         resultset = cursor.fetchall()
         
-        # 标记为已读
+        # 标记为已读（仅对未撤回的消息）
         cursor.execute('''
             UPDATE private_text_messages 
             SET is_read = 1 
-            WHERE receiver_name = ? AND sender_name = ?
+            WHERE receiver_name = ? AND sender_name = ? AND is_withdrawn = 0
         ''', (user_name, chat_with_name))
         
         conn.commit()
         conn.close()
         
-        # 返回消息数据，包含已读状态
-        return [(row['sender_name'], row['receiver_name'], row['message'], row['send_time'], row['is_read']) for row in resultset]
+        # 返回消息数据，包含已读状态和撤回状态
+        return [(row['id'], row['sender_name'], row['receiver_name'], row['message'], row['send_time'], row['is_read'], bool(row['is_withdrawn'])) for row in resultset]
     except Exception as e:
         print(f"获取私聊消息时发生错误: {str(e)}")
         return []
@@ -395,9 +395,9 @@ def get_private_image_messages(user_name, chat_with_name):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # 获取所有相关的私聊图片消息，包括已读状态
+        # 获取所有相关的私聊图片消息，包括已读状态和撤回状态
         cursor.execute('''
-            SELECT sender_name, receiver_name, image_data, image_type, image_size, send_time, is_read 
+            SELECT id, sender_name, receiver_name, image_data, image_type, image_size, send_time, is_read, is_withdrawn 
             FROM private_image_messages 
             WHERE (sender_name = ? AND receiver_name = ?) 
             OR (sender_name = ? AND receiver_name = ?)
@@ -406,18 +406,18 @@ def get_private_image_messages(user_name, chat_with_name):
         
         resultset = cursor.fetchall()
         
-        # 标记为已读
+        # 标记为已读（仅对未撤回的消息）
         cursor.execute('''
             UPDATE private_image_messages 
             SET is_read = 1 
-            WHERE receiver_name = ? AND sender_name = ?
+            WHERE receiver_name = ? AND sender_name = ? AND is_withdrawn = 0
         ''', (user_name, chat_with_name))
         
         conn.commit()
         conn.close()
         
-        # 返回图片消息数据，包含已读状态
-        return [(row['sender_name'], row['receiver_name'], row['image_data'], row['image_type'], row['image_size'], row['send_time'], row['is_read']) for row in resultset]
+        # 返回图片消息数据，包含已读状态和撤回状态
+        return [(row['id'], row['sender_name'], row['receiver_name'], row['image_data'], row['image_type'], row['image_size'], row['send_time'], row['is_read'], bool(row['is_withdrawn'])) for row in resultset]
     except Exception as e:
         print(f"获取私聊图片消息时发生错误: {str(e)}")
         return []
@@ -843,3 +843,498 @@ def get_unread_image_messages_count(username):
     count = cursor.fetchone()[0]
     conn.close()
     return count
+
+# 用户在线状态相关函数
+def update_user_status(user_name, is_online):
+    """更新用户在线状态"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # 检查用户状态记录是否存在
+        cursor.execute("SELECT id FROM user_status WHERE user_name = ?", (user_name,))
+        result = cursor.fetchone()
+        
+        if result:
+            # 更新现有记录
+            cursor.execute(
+                "UPDATE user_status SET is_online = ?, last_seen = ? WHERE user_name = ?",
+                (is_online, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), user_name)
+            )
+        else:
+            # 创建新记录
+            cursor.execute(
+                "INSERT INTO user_status(user_name, is_online, last_seen) VALUES (?, ?, ?)",
+                (user_name, is_online, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            )
+        
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"更新用户状态失败: {str(e)}")
+        return False
+
+def get_user_status(user_name):
+    """获取用户在线状态"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT is_online, last_seen FROM user_status WHERE user_name = ?", (user_name,))
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result:
+            return {
+                'is_online': bool(result['is_online']),
+                'last_seen': result['last_seen']
+            }
+        else:
+            return {
+                'is_online': False,
+                'last_seen': None
+            }
+    except Exception as e:
+        print(f"获取用户状态失败: {str(e)}")
+        return {
+            'is_online': False,
+            'last_seen': None
+        }
+
+def get_online_users():
+    """获取所有在线用户"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT user_name FROM user_status WHERE is_online = 1")
+        resultset = cursor.fetchall()
+        conn.close()
+        return [row['user_name'] for row in resultset]
+    except Exception as e:
+        print(f"获取在线用户失败: {str(e)}")
+        return []
+
+# 通知相关函数
+def create_notification(user_name, notification_type, title, content):
+    """创建通知"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO notifications(user_name, type, title, content, is_read) VALUES (?, ?, ?, ?, 0)",
+            (user_name, notification_type, title, content)
+        )
+        notification_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        return notification_id
+    except Exception as e:
+        print(f"创建通知失败: {str(e)}")
+        return None
+
+def get_user_notifications(user_name, limit=20):
+    """获取用户通知"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM notifications WHERE user_name = ? ORDER BY created_at DESC LIMIT ?",
+            (user_name, limit)
+        )
+        resultset = cursor.fetchall()
+        conn.close()
+        
+        notifications = []
+        for row in resultset:
+            notifications.append({
+                'id': row['id'],
+                'type': row['type'],
+                'title': row['title'],
+                'content': row['content'],
+                'is_read': bool(row['is_read']),
+                'created_at': row['created_at']
+            })
+        
+        return notifications
+    except Exception as e:
+        print(f"获取用户通知失败: {str(e)}")
+        return []
+
+def mark_notification_as_read(notification_id):
+    """标记通知为已读"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("UPDATE notifications SET is_read = 1 WHERE id = ?", (notification_id,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"标记通知为已读失败: {str(e)}")
+        return False
+
+def get_unread_notifications_count(user_name):
+    """获取未读通知数量"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM notifications WHERE user_name = ? AND is_read = 0", (user_name,))
+        count = cursor.fetchone()[0]
+        conn.close()
+        return count
+    except Exception as e:
+        print(f"获取未读通知数量失败: {str(e)}")
+        return 0
+
+# 个人资料相关函数
+def create_or_update_user_profile(user_name, avatar_path=None, bio=None, birth_date=None, theme_preference='light', notification_enabled=True):
+    """创建或更新用户个人资料"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # 检查用户资料是否存在
+        cursor.execute("SELECT id FROM user_profiles WHERE user_name = ?", (user_name,))
+        result = cursor.fetchone()
+        
+        if result:
+            # 更新现有资料
+            update_fields = []
+            params = []
+            
+            if avatar_path is not None:
+                update_fields.append("avatar_path = ?")
+                params.append(avatar_path)
+            
+            if bio is not None:
+                update_fields.append("bio = ?")
+                params.append(bio)
+            
+            if birth_date is not None:
+                update_fields.append("birth_date = ?")
+                params.append(birth_date)
+            
+            if theme_preference is not None:
+                update_fields.append("theme_preference = ?")
+                params.append(theme_preference)
+            
+            if notification_enabled is not None:
+                update_fields.append("notification_enabled = ?")
+                params.append(notification_enabled)
+            
+            if update_fields:
+                params.append(user_name)
+                query = f"UPDATE user_profiles SET {', '.join(update_fields)} WHERE user_name = ?"
+                cursor.execute(query, params)
+        else:
+            # 创建新资料
+            cursor.execute(
+                "INSERT INTO user_profiles(user_name, avatar_path, bio, birth_date, theme_preference, notification_enabled) VALUES (?, ?, ?, ?, ?, ?)",
+                (user_name, avatar_path, bio, birth_date, theme_preference, notification_enabled)
+            )
+        
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"创建或更新用户资料失败: {str(e)}")
+        return False
+
+def get_user_profile(user_name):
+    """获取用户个人资料"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM user_profiles WHERE user_name = ?", (user_name,))
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result:
+            return {
+                'user_name': result['user_name'],
+                'avatar_path': result['avatar_path'],
+                'bio': result['bio'],
+                'birth_date': result['birth_date'],
+                'theme_preference': result['theme_preference'],
+                'notification_enabled': bool(result['notification_enabled'])
+            }
+        else:
+            return {
+                'user_name': user_name,
+                'avatar_path': None,
+                'bio': None,
+                'birth_date': None,
+                'theme_preference': 'light',
+                'notification_enabled': True
+            }
+    except Exception as e:
+        print(f"获取用户资料失败: {str(e)}")
+        return None
+
+# 文件分享相关函数
+def save_shared_file(sender_name, receiver_name, file_name, file_path, file_size, file_type):
+    """保存分享的文件信息"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO shared_files(sender_name, receiver_name, file_name, file_path, file_size, file_type) VALUES (?, ?, ?, ?, ?, ?)",
+            (sender_name, receiver_name, file_name, file_path, file_size, file_type)
+        )
+        file_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        return file_id
+    except Exception as e:
+        print(f"保存分享文件失败: {str(e)}")
+        return None
+
+def get_shared_files(user_name, with_user=None):
+    """获取分享的文件"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        if with_user:
+            # 获取与特定用户的文件分享记录
+            cursor.execute(
+                "SELECT * FROM shared_files WHERE (sender_name = ? AND receiver_name = ?) OR (sender_name = ? AND receiver_name = ?) ORDER BY send_time DESC",
+                (user_name, with_user, with_user, user_name)
+            )
+        else:
+            # 获取用户所有的文件分享记录
+            cursor.execute(
+                "SELECT * FROM shared_files WHERE sender_name = ? OR receiver_name = ? ORDER BY send_time DESC",
+                (user_name, user_name)
+            )
+        
+        resultset = cursor.fetchall()
+        conn.close()
+        
+        files = []
+        for row in resultset:
+            files.append({
+                'id': row['id'],
+                'sender_name': row['sender_name'],
+                'receiver_name': row['receiver_name'],
+                'file_name': row['file_name'],
+                'file_path': row['file_path'],
+                'file_size': row['file_size'],
+                'file_type': row['file_type'],
+                'send_time': row['send_time'],
+                'is_read': bool(row['is_read'])
+            })
+        
+        return files
+    except Exception as e:
+        print(f"获取分享文件失败: {str(e)}")
+        return []
+
+def mark_file_as_read(file_id):
+    """标记文件为已读"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("UPDATE shared_files SET is_read = 1 WHERE id = ?", (file_id,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"标记文件为已读失败: {str(e)}")
+        return False
+
+# 消息撤回相关函数
+def withdraw_text_message(message_id, sender_name):
+    """撤回文本消息"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # 验证消息是否属于发送者
+        cursor.execute("SELECT sender_name FROM private_text_messages WHERE id = ?", (message_id,))
+        result = cursor.fetchone()
+        
+        if not result or result['sender_name'] != sender_name:
+            conn.close()
+            return False
+        
+        # 标记消息为已撤回
+        cursor.execute(
+            "UPDATE private_text_messages SET is_withdrawn = 1, withdrawn_time = ? WHERE id = ?",
+            (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), message_id)
+        )
+        
+        # 记录撤回操作
+        cursor.execute(
+            "INSERT INTO message_withdrawals(message_id, message_type, sender_name, withdrawn_time) VALUES (?, 'text', ?, ?)",
+            (message_id, sender_name, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        )
+        
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"撤回文本消息失败: {str(e)}")
+        return False
+
+def withdraw_image_message(message_id, sender_name):
+    """撤回图片消息"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # 验证消息是否属于发送者
+        cursor.execute("SELECT sender_name FROM private_image_messages WHERE id = ?", (message_id,))
+        result = cursor.fetchone()
+        
+        if not result or result['sender_name'] != sender_name:
+            conn.close()
+            return False
+        
+        # 标记消息为已撤回
+        cursor.execute(
+            "UPDATE private_image_messages SET is_withdrawn = 1, withdrawn_time = ? WHERE id = ?",
+            (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), message_id)
+        )
+        
+        # 记录撤回操作
+        cursor.execute(
+            "INSERT INTO message_withdrawals(message_id, message_type, sender_name, withdrawn_time) VALUES (?, 'image', ?, ?)",
+            (message_id, sender_name, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        )
+        
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"撤回图片消息失败: {str(e)}")
+        return False
+
+def is_message_withdrawn(message_id, message_type):
+    """检查消息是否已被撤回"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        if message_type == 'text':
+            cursor.execute("SELECT is_withdrawn FROM private_text_messages WHERE id = ?", (message_id,))
+        elif message_type == 'image':
+            cursor.execute("SELECT is_withdrawn FROM private_image_messages WHERE id = ?", (message_id,))
+        else:
+            conn.close()
+            return False
+        
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result:
+            return bool(result['is_withdrawn'])
+        else:
+            return False
+    except Exception as e:
+        print(f"检查消息撤回状态失败: {str(e)}")
+        return False
+
+# 更新数据库结构
+def update_database():
+    """更新数据库结构以支持新功能"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # 添加用户在线状态表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_status (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_name TEXT NOT NULL UNIQUE,
+                is_online INTEGER DEFAULT 0,
+                last_seen TEXT,
+                FOREIGN KEY (user_name) REFERENCES users(s_name)
+            )
+        ''')
+        
+        # 添加用户通知表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_name TEXT NOT NULL,
+                type TEXT NOT NULL,
+                title TEXT,
+                content TEXT,
+                is_read INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_name) REFERENCES users(s_name)
+            )
+        ''')
+        
+        # 添加用户个人资料扩展表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_profiles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_name TEXT NOT NULL UNIQUE,
+                avatar_path TEXT,
+                bio TEXT,
+                birth_date TEXT,
+                theme_preference TEXT DEFAULT 'light',
+                notification_enabled INTEGER DEFAULT 1,
+                FOREIGN KEY (user_name) REFERENCES users(s_name)
+            )
+        ''')
+        
+        # 添加文件分享表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS shared_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sender_name TEXT NOT NULL,
+                receiver_name TEXT NOT NULL,
+                file_name TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                file_size INTEGER,
+                file_type TEXT,
+                send_time TEXT DEFAULT CURRENT_TIMESTAMP,
+                is_read INTEGER DEFAULT 0,
+                FOREIGN KEY (sender_name) REFERENCES users(s_name),
+                FOREIGN KEY (receiver_name) REFERENCES users(s_name)
+            )
+        ''')
+        
+        # 检查是否需要添加撤回相关字段
+        cursor.execute("PRAGMA table_info(private_text_messages)")
+        columns = [column[1] for column in cursor.fetchall()]
+        
+        if 'is_withdrawn' not in columns:
+            cursor.execute("ALTER TABLE private_text_messages ADD COLUMN is_withdrawn INTEGER DEFAULT 0")
+        
+        if 'withdrawn_time' not in columns:
+            cursor.execute("ALTER TABLE private_text_messages ADD COLUMN withdrawn_time TEXT")
+        
+        cursor.execute("PRAGMA table_info(private_image_messages)")
+        columns = [column[1] for column in cursor.fetchall()]
+        
+        if 'is_withdrawn' not in columns:
+            cursor.execute("ALTER TABLE private_image_messages ADD COLUMN is_withdrawn INTEGER DEFAULT 0")
+        
+        if 'withdrawn_time' not in columns:
+            cursor.execute("ALTER TABLE private_image_messages ADD COLUMN withdrawn_time TEXT")
+        
+        # 添加撤回通知表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS message_withdrawals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id INTEGER NOT NULL,
+                message_type TEXT NOT NULL,
+                sender_name TEXT NOT NULL,
+                withdrawn_time TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (sender_name) REFERENCES users(s_name)
+            )
+        ''')
+        
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"更新数据库结构失败: {str(e)}")
+        return False
+
+# 执行数据库更新
+update_database()
