@@ -467,10 +467,6 @@
             {% if session.username %}
             <div class="navbar-nav ms-auto">
                 <a class="nav-link" href="{{ url_for('main') }}"><i class="fas fa-home me-1"></i> 主页</a>
-                <a class="nav-link position-relative" href="{{ url_for('notifications_page') }}">
-                    <i class="fas fa-bell me-1"></i> 通知
-                    <span id="notification-badge" class="notification-badge d-none">0</span>
-                </a>
                 <a class="nav-link" href="{{ url_for('profile_page') }}">
                     <i class="fas fa-user me-1"></i> 个人资料
                 </a>
@@ -696,28 +692,6 @@
             });
         }
         
-        // 检查未读通知数量
-        function checkUnreadNotifications() {
-            $.ajax({
-                url: "{{ url_for('get_unread_notifications_count') }}",
-                type: "GET",
-                dataType: "json",
-                success: function(response) {
-                    if (response.success) {
-                        const count = response.data;
-                        const badge = $('#notification-badge');
-                        
-                        if (count > 0) {
-                            badge.text(count > 99 ? '99+' : count);
-                            badge.removeClass('d-none');
-                        } else {
-                            badge.addClass('d-none');
-                        }
-                    }
-                }
-            });
-        }
-        
         // 心跳检测，保持用户在线状态
         let heartbeatInterval;
         
@@ -762,7 +736,8 @@
             startHeartbeat();
             
             // 每30秒检查一次未读通知
-            setInterval(checkUnreadNotifications, 30000);
+            // 但是，我已经手动关闭了通知中心的功能
+            // setInterval(checkUnreadNotifications, 30000);
             
             // 页面关闭或刷新时更新用户状态为离线
             $(window).on('beforeunload', function() {

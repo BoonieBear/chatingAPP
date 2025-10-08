@@ -8,10 +8,12 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import fuc
 import datetime
 import base64
+import dotenv
+dotenv.load_dotenv("../.env")  # 从 .env 文件加载环境变量
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-here'  # 在生产环境中应该使用更安全的密钥
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 限制上传文件大小为16MB
+app.config['MAX_CONTENT_LENGTH'] = int(os.getenv('MAX_CONTENT_LENGTH', 200)) * 1024 * 1024  # 限制上传文件大小为200MB
 
 # 静态文件路由
 @app.route('/static/<path:filename>')
@@ -574,12 +576,7 @@ def send_private_message():
     try:
         if fuc.send_private_message(session['username'], receiver_name, message):
             # 创建通知
-            fuc.create_notification(
-                receiver_name,
-                'message',
-                f'来自 {session["username"]} 的消息',
-                f'{session["username"]} 向您发送了一条消息'
-            )
+            
             return jsonify({'success': True, 'message': '发送成功'})
         else:
             return jsonify({'success': False, 'message': '发送失败'})
@@ -610,17 +607,20 @@ def send_private_image():
         temp_path = os.path.join(temp_dir, temp_filename)
         image_file.save(temp_path)
         
+        # 获取图片类型和大小
+        image_type = image_file.mimetype
+        image_size = os.path.getsize(temp_path)
+
+        # 读取图片数据
+        with open(temp_path, 'rb') as f:
+            image_data = f.read()
+        
         # 保存图片消息到数据库
-        if fuc.send_private_image_message(session['username'], receiver_name, temp_path):
+        if fuc.send_private_image_message(session['username'], receiver_name, image_data, image_type, image_size):
             # 删除临时文件
             os.remove(temp_path)
             # 创建通知
-            fuc.create_notification(
-                receiver_name,
-                'message',
-                f'来自 {session["username"]} 的图片',
-                f'{session["username"]} 向您发送了一张图片'
-            )
+            
             return jsonify({'success': True, 'message': '发送成功'})
         else:
             # 删除临时文件
@@ -640,19 +640,6 @@ def logout():
         fuc.update_user_status(session['username'], False)
     session.clear()
     return redirect(url_for('login'))
-
-# 通知中心页面
-@app.route('/notifications')
-def notifications_page():
-    if 'username' not in session:
-        return redirect(url_for('login'))
-    
-    try:
-        unread_count = fuc.get_unread_notifications_count(session['username'])
-        return render_template('notifications.html', user_info=session['user_info'], unread_count=unread_count)
-    except Exception as e:
-        flash(f'获取通知数量时发生错误: {str(e)}', 'error')
-        return redirect(url_for('main'))
 
 # 个人资料页面
 @app.route('/profile')
@@ -949,51 +936,6 @@ def get_online_users():
     except Exception as e:
         return jsonify({'success': False, 'message': f'获取在线用户时发生错误: {str(e)}'})
 
-# 通知相关路由
-@app.route('/get_notifications')
-def get_notifications():
-    """获取用户通知"""
-    if 'username' not in session:
-        return jsonify({'success': False, 'message': '未登录'})
-    
-    try:
-        limit = request.args.get('limit', 20, type=int)
-        notifications = fuc.get_user_notifications(session['username'], limit)
-        return jsonify({'success': True, 'data': notifications})
-    except Exception as e:
-        return jsonify({'success': False, 'message': f'获取通知时发生错误: {str(e)}'})
-
-@app.route('/mark_notification_read', methods=['POST'])
-def mark_notification_read():
-    """标记通知为已读"""
-    if 'username' not in session:
-        return jsonify({'success': False, 'message': '未登录'})
-    
-    try:
-        notification_id = request.form.get('notification_id', type=int)
-        
-        if not notification_id:
-            return jsonify({'success': False, 'message': '参数错误'})
-        
-        if fuc.mark_notification_as_read(notification_id):
-            return jsonify({'success': True, 'message': '标记成功'})
-        else:
-            return jsonify({'success': False, 'message': '标记失败'})
-    except Exception as e:
-        return jsonify({'success': False, 'message': f'标记通知时发生错误: {str(e)}'})
-
-@app.route('/get_unread_notifications_count')
-def get_unread_notifications_count():
-    """获取未读通知数量"""
-    if 'username' not in session:
-        return jsonify({'success': False, 'message': '未登录'})
-    
-    try:
-        count = fuc.get_unread_notifications_count(session['username'])
-        return jsonify({'success': True, 'data': count})
-    except Exception as e:
-        return jsonify({'success': False, 'message': f'获取未读通知数量时发生错误: {str(e)}'})
-
 # 个人资料相关路由
 @app.route('/get_user_profile')
 def get_user_profile():
@@ -1102,13 +1044,8 @@ def send_file():
         )
         
         if file_id:
-            # 创建通知
-            fuc.create_notification(
-                receiver_name,
-                'file',
-                f'来自 {session["username"]} 的文件',
-                f'{session["username"]} 向您发送了一个文件: {file.filename}'
-            )
+            
+            
             
             return jsonify({'success': True, 'message': '发送成功'})
         else:
@@ -1139,6 +1076,7 @@ def download_file(file_id):
         return jsonify({'success': False, 'message': '未登录'})
     
     try:
+        from flask import send_file
         # 获取文件信息
         files = fuc.get_shared_files(session['username'])
         file_info = None
@@ -1157,11 +1095,24 @@ def download_file(file_id):
         # 构建文件路径
         file_path = os.path.join(app.root_path, 'static', file_info['file_path'])
         
+
+        print(f"DEBUG: Attempting to download file: {file_info['file_name']}")
+        print(f"DEBUG: Constructed file_path: {file_path}")
+        print(f"DEBUG: Does file_path exist? {os.path.exists(file_path)}")
+        print(f"DEBUG: File size from DB: {file_info['file_size']} bytes")
+        print(f"DEBUG: Actual file size on disk: {os.path.getsize(file_path)} bytes")
+
         if not os.path.exists(file_path):
-            return jsonify({'success': False, 'message': '文件不存在'})
-        
+            return jsonify({'success': False, 'message': '文件不存在或已删除'})
+
         # 返回文件
-        return send_file(file_path, as_attachment=True, download_name=file_info['file_name'])
+        # 使用更可靠的方式发送大文件
+        response = send_file(file_path, download_name=file_info['file_name'], as_attachment=True)
+        # 禁用X-Sendfile功能，确保文件内容正确发送
+        response.headers['X-Sendfile'] = None
+        # 设置正确的Content-Length
+        response.headers['Content-Length'] = os.path.getsize(file_path)
+        return response
     except Exception as e:
         return jsonify({'success': False, 'message': f'下载文件时发生错误: {str(e)}'})
 
@@ -1254,31 +1205,6 @@ def check_unread_messages():
                 GROUP BY sender_name
             ''', (username,))
             unread_files = cursor.fetchall()
-            
-            # 创建通知
-            for sender in unread_text:
-                fuc.create_notification(
-                    username,
-                    'message',
-                    f'来自 {sender["sender_name"]} 的消息',
-                    f'您有 {sender["count"]} 条来自 {sender["sender_name"]} 的未读文本消息'
-                )
-            
-            for sender in unread_image:
-                fuc.create_notification(
-                    username,
-                    'message',
-                    f'来自 {sender["sender_name"]} 的图片',
-                    f'您有 {sender["count"]} 张来自 {sender["sender_name"]} 的未读图片'
-                )
-            
-            for sender in unread_files:
-                fuc.create_notification(
-                    username,
-                    'file',
-                    f'来自 {sender["sender_name"]} 的文件',
-                    f'您有 {sender["count"]} 个来自 {sender["sender_name"]} 的未读文件'
-                )
         
         conn.close()
     except Exception as e:
@@ -1287,23 +1213,8 @@ def check_unread_messages():
 import threading
 import time
 
-# 定时检查未读消息的线程
-def notification_thread():
-    """定时检查未读消息的线程函数"""
-    while True:
-        try:
-            time.sleep(60)  # 每分钟检查一次
-            check_unread_messages()
-        except Exception as e:
-            print(f"检查未读消息时发生错误: {str(e)}")
-
-# 启动通知线程
-notification_thread_obj = threading.Thread(target=notification_thread, daemon=True)
-notification_thread_obj.start()
 
 if __name__ == '__main__':
-    import dotenv
-    dotenv.load_dotenv("../.env")  # 从 .env 文件加载环境变量
     APP_IP = os.getenv('APP_IP', '127.0.0.1')  # 默认值
     APP_PORT = int(os.getenv('APP_PORT', 5000)) # 默认值
     app.run(debug=True, host=APP_IP, port=APP_PORT)

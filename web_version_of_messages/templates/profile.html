@@ -89,15 +89,6 @@
                             </div>
                         </div>
                         
-                        <!-- 通知设置 -->
-                        <div class="mb-4">
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" id="notification-enabled" name="notification_enabled" {{ 'checked' if profile.notification_enabled else '' }}>
-                                <label class="form-check-label" for="notification-enabled">
-                                    <i class="fas fa-bell"></i> 启用通知
-                                </label>
-                            </div>
-                        </div>
                         
                         <!-- 提交按钮 -->
                         <div class="d-grid gap-2">
@@ -258,4 +249,5 @@
     body.theme-dark .navbar-brand {
         color: #f0f0f0 !important;
     }
+</style>
 {% endblock %}

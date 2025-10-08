@@ -233,7 +233,7 @@ def sent(name):
     cursor = conn.cursor()
     try:
         cursor.execute("INSERT INTO mm(name, msg, time, is_persistent) VALUES (?, ?, ?, ?)",
-                       (name, msg, d.strftime("%Y-%m-%d %H:%M"), 0))
+                       (name, msg, d.strftime("%Y-%m-%d %H:%M:%S"), 0))
         conn.commit()
         print("发送成功！")
     except Exception as e:
@@ -312,7 +312,7 @@ def send_private_message(sender_name, receiver_name, message):
     cursor = conn.cursor()
     try:
         cursor.execute("INSERT INTO private_text_messages(sender_name, receiver_name, message, send_time, is_read) VALUES (?, ?, ?, ?, ?)",
-                       (sender_name, receiver_name, message, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:?"), 0))
+                       (sender_name, receiver_name, message, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 0))
         conn.commit()
         return True
     except Exception as e:
@@ -336,7 +336,7 @@ def send_private_image_message(sender_name, receiver_name, image_data, image_typ
     cursor = conn.cursor()
     try:
         cursor.execute("INSERT INTO private_image_messages(sender_name, receiver_name, image_data, image_type, image_size, send_time, is_read) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       (sender_name, receiver_name, image_data, image_type, image_size, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:?"), 0))
+                       (sender_name, receiver_name, image_data, image_type, image_size, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 0))
         conn.commit()
         return True
     except Exception as e:
@@ -540,14 +540,14 @@ def create_group(creator_name, group_name, description=""):
         # 创建群组
         cursor.execute(
             "INSERT INTO groups(name, creator, created_time, description) VALUES (?, ?, ?, ?)",
-            (group_name, creator_name, d.strftime("%Y-%m-%d %H:%M:?"), description)
+            (group_name, creator_name, d.strftime("%Y-%m-%d %H:%M:%S"), description)
         )
         group_id = cursor.lastrowid
         
         # 将创建者添加为群组成员（管理员）
         cursor.execute(
             "INSERT INTO group_members(group_id, user_name, join_time, role) VALUES (?, ?, ?, ?)",
-            (group_id, creator_name, d.strftime("%Y-%m-%d %H:%M:?"), "admin")
+            (group_id, creator_name, d.strftime("%Y-%m-%d %H:%M:%S"), "admin")
         )
         conn.commit()
         conn.close()
@@ -575,7 +575,7 @@ def add_group_member(group_id, user_name):
         # 添加用户为群组成员
         cursor.execute(
             "INSERT INTO group_members(group_id, user_name, join_time) VALUES (?, ?, ?)",
-            (group_id, user_name, d.strftime("%Y-%m-%d %H:%M:?"))
+            (group_id, user_name, d.strftime("%Y-%m-%d %H:%M:%S"))
         )
         
         conn.commit()
@@ -655,7 +655,7 @@ def send_group_message(group_id, sender_name, message):
         
         cursor.execute(
             "INSERT INTO group_messages(group_id, sender_name, message, send_time) VALUES (?, ?, ?, ?)",
-            (group_id, sender_name, message, d.strftime("%Y-%m-%d %H:%M:?"))
+            (group_id, sender_name, message, d.strftime("%Y-%m-%d %H:%M:%S"))
         )
         
         conn.commit()
@@ -704,7 +704,7 @@ def create_moment(user_name, content, image_paths):
         d = datetime.datetime.today()
         cursor.execute(
             "INSERT INTO moments(user_name, content, image_paths, post_time) VALUES (?, ?, ?, ?)",
-            (user_name, content, ','.join(image_paths) if image_paths else None, d.strftime("%Y-%m-%d %H:%M:?"))
+            (user_name, content, ','.join(image_paths) if image_paths else None, d.strftime("%Y-%m-%d %H:%M:%S"))
         )
         conn.commit()
         conn.close()
@@ -799,7 +799,7 @@ def like_moment(moment_id, user_name):
         else:
             # 如果未点赞，则添加点赞
             cursor.execute("INSERT INTO moment_likes(moment_id, user_name, like_time) VALUES (?, ?, ?)",
-                           (moment_id, user_name, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:?")))
+                           (moment_id, user_name, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
             conn.commit()
             conn.close()
             return True  # 表示点赞成功
@@ -816,7 +816,7 @@ def comment_moment(moment_id, user_name, comment):
         # 添加评论
         d = datetime.datetime.today()
         cursor.execute("INSERT INTO moment_comments(moment_id, user_name, comment, comment_time) VALUES (?, ?, ?, ?)", 
-                      (moment_id, user_name, comment, d.strftime("%Y-%m-%d %H:%M:?")))
+                      (moment_id, user_name, comment, d.strftime("%Y-%m-%d %H:%M:%S")))
         
         conn.commit()
         conn.close()
@@ -914,23 +914,6 @@ def get_online_users():
         print(f"获取在线用户失败: {str(e)}")
         return []
 
-# 通知相关函数
-def create_notification(user_name, notification_type, title, content):
-    """创建通知"""
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO notifications(user_name, type, title, content, is_read) VALUES (?, ?, ?, ?, 0)",
-            (user_name, notification_type, title, content)
-        )
-        notification_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        return notification_id
-    except Exception as e:
-        print(f"创建通知失败: {str(e)}")
-        return None
 
 def get_user_notifications(user_name, limit=20):
     """获取用户通知"""
@@ -1078,8 +1061,8 @@ def save_shared_file(sender_name, receiver_name, file_name, file_path, file_size
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO shared_files(sender_name, receiver_name, file_name, file_path, file_size, file_type) VALUES (?, ?, ?, ?, ?, ?)",
-            (sender_name, receiver_name, file_name, file_path, file_size, file_type)
+            "INSERT INTO shared_files(sender_name, receiver_name, file_name, file_path, file_size, file_type, send_time, is_read) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (sender_name, receiver_name, file_name, file_path, file_size, file_type, datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 0)
         )
         file_id = cursor.lastrowid
         conn.commit()
@@ -1118,7 +1101,7 @@ def get_shared_files(user_name, with_user=None):
                 'sender_name': row['sender_name'],
                 'receiver_name': row['receiver_name'],
                 'file_name': row['file_name'],
-                'file_path': row['file_path'],
+                'file_path': row['file_path'], # 添加 file_path
                 'file_size': row['file_size'],
                 'file_type': row['file_type'],
                 'send_time': row['send_time'],
