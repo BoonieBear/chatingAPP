@@ -776,6 +776,21 @@
     </script>
     {% endif %}
     
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script>
+        var socket = io();
+        
+        socket.on('connect', function() {
+            console.log('Connected to WebSocket server');
+        });
+        
+        socket.on('status_change', function(data) {
+            // Update user status in UI if visible
+            if (typeof updateStatusUI === 'function') {
+                updateStatusUI(data);
+            }
+        });
+    </script>
     {% block scripts %}{% endblock %}
 </body>
 </html>

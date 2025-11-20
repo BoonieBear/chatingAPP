@@ -80,6 +80,7 @@ def init_db():
             group_name TEXT NOT NULL UNIQUE,
             creator_name TEXT NOT NULL,
             create_time TEXT NOT NULL,
+            description TEXT DEFAULT '',
             FOREIGN KEY (creator_name) REFERENCES users(s_name)
         )
     ''')
@@ -91,6 +92,7 @@ def init_db():
             group_id INTEGER NOT NULL,
             member_name TEXT NOT NULL,
             join_time TEXT NOT NULL,
+            role TEXT DEFAULT 'member',
             FOREIGN KEY (group_id) REFERENCES groups(id),
             FOREIGN KEY (member_name) REFERENCES users(s_name)
         )
@@ -530,24 +532,28 @@ def save_image_data_to_file(image_data, image_type, sender_name, send_time):
         return None
 
 # 群组相关函数
-def create_group(creator_name, group_name, description=""):
+def create_group(creator_name, group_name, description="", avatar_path=None):
     """创建群组"""
     try:
         d = datetime.datetime.today()
         conn = get_db_connection()
         cursor = conn.cursor()
         
+        # Generate invite token
+        import uuid
+        invite_token = uuid.uuid4().hex
+        
         # 创建群组
         cursor.execute(
-            "INSERT INTO groups(name, creator, created_time, description) VALUES (?, ?, ?, ?)",
-            (group_name, creator_name, d.strftime("%Y-%m-%d %H:%M:%S"), description)
+            "INSERT INTO groups(name, creator, created_time, description, avatar_path, invite_token) VALUES (?, ?, ?, ?, ?, ?)",
+            (group_name, creator_name, d.strftime("%Y-%m-%d %H:%M:%S"), description, avatar_path, invite_token)
         )
         group_id = cursor.lastrowid
         
-        # 将创建者添加为群组成员（管理员）
+        # 将创建者添加为群组成员（创建者）
         cursor.execute(
             "INSERT INTO group_members(group_id, user_name, join_time, role) VALUES (?, ?, ?, ?)",
-            (group_id, creator_name, d.strftime("%Y-%m-%d %H:%M:%S"), "admin")
+            (group_id, creator_name, d.strftime("%Y-%m-%d %H:%M:%S"), "creator")
         )
         conn.commit()
         conn.close()
@@ -585,6 +591,90 @@ def add_group_member(group_id, user_name):
         print(f"添加群组成员失败: {str(e)}")
         return False
 
+def join_group_by_token(token, user_name):
+    """通过邀请码加入群组"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # 查找群组
+        cursor.execute("SELECT id FROM groups WHERE invite_token = ?", (token,))
+        group = cursor.fetchone()
+        
+        if not group:
+            conn.close()
+            return False, "无效的邀请链接"
+            
+        group_id = group['id']
+        
+        # 检查是否已经是成员
+        cursor.execute("SELECT id FROM group_members WHERE group_id = ? AND user_name = ?", (group_id, user_name))
+        if cursor.fetchone():
+            conn.close()
+            return False, "您已经是该群组成员"
+            
+        # 添加成员
+        d = datetime.datetime.today()
+        cursor.execute(
+            "INSERT INTO group_members(group_id, user_name, join_time) VALUES (?, ?, ?)",
+            (group_id, user_name, d.strftime("%Y-%m-%d %H:%M:%S"))
+        )
+        conn.commit()
+        conn.close()
+        return True, "加入成功"
+    except Exception as e:
+        print(f"加入群组失败: {str(e)}")
+        return False, str(e)
+
+def get_group_info(group_id):
+    """获取群组信息"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM groups WHERE id = ?", (group_id,))
+        group = cursor.fetchone()
+        conn.close()
+        if group:
+            return dict(group)
+        return None
+    except Exception as e:
+        print(f"获取群组信息失败: {str(e)}")
+        return None
+
+def mark_group_message_read(message_id, user_name):
+    """标记群消息为已读"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # 检查是否已读
+        cursor.execute("SELECT id FROM group_message_reads WHERE message_id = ? AND user_name = ?", (message_id, user_name))
+        if not cursor.fetchone():
+            cursor.execute(
+                "INSERT INTO group_message_reads(message_id, user_name) VALUES (?, ?)",
+                (message_id, user_name)
+            )
+            conn.commit()
+        
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"标记群消息已读失败: {str(e)}")
+        return False
+
+def get_group_message_read_count(message_id):
+    """获取群消息已读人数"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM group_message_reads WHERE message_id = ?", (message_id,))
+        count = cursor.fetchone()[0]
+        conn.close()
+        return count
+    except Exception as e:
+        print(f"获取群消息已读数失败: {str(e)}")
+        return 0
+
 def get_user_groups(user_name):
     """获取用户所属的群组列表"""
     try:
@@ -592,7 +682,7 @@ def get_user_groups(user_name):
         cursor = conn.cursor()
         
         cursor.execute('''
-            SELECT g.id, g.name, g.creator, g.created_time, g.description
+            SELECT g.id, g.name, g.creator, g.created_time, g.description, g.avatar_path, g.invite_token
             FROM groups g
             JOIN group_members gm ON g.id = gm.group_id
             WHERE gm.user_name = ?
@@ -609,7 +699,9 @@ def get_user_groups(user_name):
                 'name': row['name'],
                 'creator': row['creator'],
                 'created_time': row['created_time'],
-                'description': row['description']
+                'description': row['description'],
+                'avatar_path': row['avatar_path'] if 'avatar_path' in row.keys() else None,
+                'invite_token': row['invite_token'] if 'invite_token' in row.keys() else None
             })
         
         return groups
@@ -693,6 +785,211 @@ def get_group_messages(group_id):
     except Exception as e:
         print(f"获取群组消息时发生错误: {str(e)}")
         return []
+
+def get_group_messages(group_id):
+    """获取群组消息"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT sender_name, message, send_time
+            FROM group_messages
+            WHERE group_id = ?
+            ORDER BY send_time ASC
+        ''', (group_id,))
+        
+        resultset = cursor.fetchall()
+        conn.close()
+        
+        messages = []
+        for row in resultset:
+            messages.append({
+                'sender_name': row['sender_name'],
+                'message': row['message'],
+                'send_time': row['send_time']
+            })
+        
+        return messages
+    except Exception as e:
+        print(f"获取群组消息时发生错误: {str(e)}")
+        return []
+
+def get_group_messages(group_id):
+    """获取群组消息"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT sender_name, message, send_time
+            FROM group_messages
+            WHERE group_id = ?
+            ORDER BY send_time ASC
+        ''', (group_id,))
+        
+        resultset = cursor.fetchall()
+        conn.close()
+        
+        messages = []
+        for row in resultset:
+            messages.append({
+                'sender_name': row['sender_name'],
+                'message': row['message'],
+                'send_time': row['send_time']
+            })
+        
+        return messages
+    except Exception as e:
+        print(f"获取群组消息时发生错误: {str(e)}")
+        return []
+
+def get_user_group_role(user_name, group_id):
+    """获取用户在群组中的角色"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT role FROM group_members WHERE group_id = ? AND user_name = ?",
+            (group_id, user_name)
+        )
+        result = cursor.fetchone()
+        conn.close()
+        if result:
+            return result['role']
+        return None
+    except Exception as e:
+        print(f"获取用户群组角色失败: {str(e)}")
+        return None
+
+def check_group_permission(user_name, group_id):
+    """检查用户在群组中的角色"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT role FROM group_members WHERE group_id = ? AND user_name = ?",
+            (group_id, user_name)
+        )
+        result = cursor.fetchone()
+        conn.close()
+        if result:
+            return result['role']
+        return None
+    except Exception as e:
+        print(f"检查群组权限失败: {str(e)}")
+        return None
+
+def set_group_member_role(group_id, target_user_name, role, current_user_name):
+    """设置群组成员角色 (creator/admin/member)"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # 检查操作者权限
+        operator_role = check_group_permission(current_user_name, group_id)
+        if operator_role not in ['creator', 'admin']:
+            conn.close()
+            print("权限不足：只有群主或管理员可以设置成员角色。")
+            return False
+
+        # 目标用户不能是群主
+        cursor.execute("SELECT role FROM group_members WHERE group_id = ? AND user_name = ?", (group_id, target_user_name))
+        target_role = cursor.fetchone()
+        if target_role and target_role['role'] == 'creator':
+            conn.close()
+            print("不能修改群主的角色。")
+            return False
+
+        # 管理员不能设置其他管理员或群主
+        if operator_role == 'admin' and role == 'admin' and target_role and target_role['role'] == 'admin':
+            conn.close()
+            print("管理员不能设置其他管理员的角色。")
+            return False
+
+        # 更新成员角色
+        cursor.execute(
+            "UPDATE group_members SET role = ? WHERE group_id = ? AND user_name = ?",
+            (role, group_id, target_user_name)
+        )
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"设置群组成员角色失败: {str(e)}")
+        return False
+
+def remove_group_member(group_id, target_user_name, current_user_name):
+    """将成员移出群组"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # 检查操作者权限
+        operator_role = check_group_permission(current_user_name, group_id)
+        if operator_role not in ['creator', 'admin']:
+            conn.close()
+            print("权限不足：只有群主或管理员可以移除成员。")
+            return False
+
+        # 检查目标用户角色
+        cursor.execute("SELECT role FROM group_members WHERE group_id = ? AND user_name = ?", (group_id, target_user_name))
+        target_member = cursor.fetchone()
+        if not target_member:
+            conn.close()
+            print("目标用户不是群组成员。")
+            return False
+
+        target_role = target_member['role']
+
+        # 群主不能被移除
+        if target_role == 'creator':
+            conn.close()
+            print("不能移除群主。")
+            return False
+
+        # 管理员不能移除其他管理员
+        if operator_role == 'admin' and target_role == 'admin':
+            conn.close()
+            print("管理员不能移除其他管理员。")
+            return False
+
+        # 移除成员
+        cursor.execute(
+            "DELETE FROM group_members WHERE group_id = ? AND user_name = ?",
+            (group_id, target_user_name)
+        )
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"移除群组成员失败: {str(e)}")
+        return False
+
+def update_group_announcement(group_id, announcement, current_user_name):
+    """更新群公告"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # 检查操作者权限
+        operator_role = check_group_permission(current_user_name, group_id)
+        if operator_role not in ['creator', 'admin']:
+            conn.close()
+            print("权限不足：只有群主或管理员可以修改群公告。")
+            return False
+
+        # 更新群公告
+        cursor.execute(
+            "UPDATE groups SET description = ? WHERE id = ?",
+            (announcement, group_id)
+        )
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"更新群公告失败: {str(e)}")
+        return False
 
 # 朋友圈相关功能函数
 
@@ -1281,6 +1578,24 @@ def update_database():
             )
         ''')
         
+        # 检查是否需要添加 groups 表的 description 字段
+        cursor.execute("PRAGMA table_info(groups)")
+        columns = [column[1] for column in cursor.fetchall()]
+        if 'description' not in columns:
+            cursor.execute("ALTER TABLE groups ADD COLUMN description TEXT DEFAULT ''")
+
+        # 检查是否需要添加 group_members 表的 role 字段
+        cursor.execute("PRAGMA table_info(group_members)")
+        columns = [column[1] for column in cursor.fetchall()]
+        if 'role' not in columns:
+            cursor.execute("ALTER TABLE group_members ADD COLUMN role TEXT DEFAULT 'member'")
+            # 更新现有群组的创建者角色
+            cursor.execute('''
+                UPDATE group_members
+                SET role = 'creator'
+                WHERE user_name IN (SELECT creator FROM groups WHERE groups.id = group_members.group_id)
+            ''')
+        
         # 检查是否需要添加撤回相关字段
         cursor.execute("PRAGMA table_info(private_text_messages)")
         columns = [column[1] for column in cursor.fetchall()]
@@ -1309,6 +1624,32 @@ def update_database():
                 sender_name TEXT NOT NULL,
                 withdrawn_time TEXT DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (sender_name) REFERENCES users(s_name)
+            )
+        ''')
+        
+
+        
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        # 检查是否需要添加 groups 表的 avatar_path 和 invite_token 字段
+        cursor.execute("PRAGMA table_info(groups)")
+        columns = [column[1] for column in cursor.fetchall()]
+        if 'avatar_path' not in columns:
+            cursor.execute("ALTER TABLE groups ADD COLUMN avatar_path TEXT")
+        if 'invite_token' not in columns:
+            cursor.execute("ALTER TABLE groups ADD COLUMN invite_token TEXT")
+            
+        # 添加群消息已读表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS group_message_reads (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id INTEGER NOT NULL,
+                user_name TEXT NOT NULL,
+                read_time TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (message_id) REFERENCES group_messages(id),
+                FOREIGN KEY (user_name) REFERENCES users(s_name)
             )
         ''')
         

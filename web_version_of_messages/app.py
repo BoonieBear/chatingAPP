@@ -9,11 +9,15 @@ import fuc
 import datetime
 import base64
 import dotenv
+from flask_socketio import SocketIO, emit, join_room, leave_room
 dotenv.load_dotenv("../.env")  # 从 .env 文件加载环境变量
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-here'  # 在生产环境中应该使用更安全的密钥
 app.config['MAX_CONTENT_LENGTH'] = int(os.getenv('MAX_CONTENT_LENGTH', 200)) * 1024 * 1024  # 限制上传文件大小为200MB
+
+# Initialize SocketIO
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 # 静态文件路由
 @app.route('/static/<path:filename>')
@@ -307,21 +311,48 @@ def create_group():
         return jsonify({'success': False, 'message': '未登录'})
     
     try:
-        group_name = request.form.get('group_name', '').strip()
-        description = request.form.get('description', '').strip()
+        group_name = request.form.get('group_name')
+        description = request.form.get('description', '')
         
         if not group_name:
             return jsonify({'success': False, 'message': '群组名称不能为空'})
+            
+        avatar_path = None
+        if 'avatar' in request.files:
+            file = request.files['avatar']
+            if file and file.filename != '':
+                # Save avatar
+                import uuid
+                ext = file.filename.rsplit('.', 1)[1].lower()
+                filename = f"group_{uuid.uuid4().hex}.{ext}"
+                file_dir = os.path.join(app.root_path, 'static', 'group_avatars')
+                if not os.path.exists(file_dir):
+                    os.makedirs(file_dir)
+                file.save(os.path.join(file_dir, filename))
+                avatar_path = f"group_avatars/{filename}"
         
-        # 创建群组
-        group_id = fuc.create_group(session['username'], group_name, description)
+        group_id = fuc.create_group(session['username'], group_name, description, avatar_path)
         
         if group_id:
-            return jsonify({'success': True, 'message': '创建群组成功', 'group_id': group_id})
+            return jsonify({'success': True, 'message': '创建群组成功'})
         else:
-            return jsonify({'success': False, 'message': '创建群组失败'})
+            return jsonify({'success': False, 'message': '创建群组失败，可能是群组名称已存在'})
     except Exception as e:
         return jsonify({'success': False, 'message': f'创建群组时发生错误: {str(e)}'})
+
+@app.route('/join_group/<token>')
+def join_group_link(token):
+    if 'username' not in session:
+        return redirect(url_for('index'))
+    
+    success, message = fuc.join_group_by_token(token, session['username'])
+    if success:
+        # Join socket room
+        # This is tricky because socket is client-side initiated.
+        # We can just redirect to main and let the client reload groups.
+        pass
+        
+    return redirect(url_for('main'))
 
 # 获取用户群组列表
 @app.route('/user_groups')
@@ -433,6 +464,13 @@ def send_group_message():
         
         # 发送消息
         if fuc.send_group_message(group_id, session['username'], message):
+            # Real-time notification
+            socketio.emit('new_group_message', {
+                'group_id': group_id,
+                'sender': session['username'],
+                'content': message,
+                'time': datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }, room=f"group_{group_id}")
             return jsonify({'success': True, 'message': '发送消息成功'})
         else:
             return jsonify({'success': False, 'message': '发送消息失败'})
@@ -463,6 +501,120 @@ def group_messages(group_id):
         return jsonify({'success': True, 'data': messages})
     except Exception as e:
         return jsonify({'success': False, 'message': f'获取群组消息时发生错误: {str(e)}'})
+
+# 获取群公告
+@app.route('/get_group_announcement/<int:group_id>')
+def get_group_announcement(group_id):
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        conn = fuc.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT description FROM groups WHERE id = ?", (group_id,))
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result:
+            return jsonify({'success': True, 'announcement': result['description']})
+        else:
+            return jsonify({'success': False, 'message': '群组不存在'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'获取群公告时发生错误: {str(e)}'})
+
+# 获取群公告
+
+# 获取用户在群组中的角色
+@app.route('/get_user_group_role/<int:group_id>')
+def get_user_group_role(group_id):
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        role = fuc.get_user_group_role(session['username'], group_id)
+        return jsonify({'success': True, 'role': role})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'获取用户群组角色时发生错误: {str(e)}'})
+
+# 提升群组成员为管理员
+@app.route('/promote_group_member', methods=['POST'])
+def promote_group_member():
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        group_id = request.form.get('group_id', type=int)
+        target_user_name = request.form.get('user_name', '').strip()
+        
+        if not group_id or not target_user_name:
+            return jsonify({'success': False, 'message': '群组ID和用户名不能为空'})
+        
+        if fuc.set_group_member_role(group_id, target_user_name, 'admin', session['username']):
+            return jsonify({'success': True, 'message': f'已将 {target_user_name} 提升为管理员'})
+        else:
+            return jsonify({'success': False, 'message': '提升管理员失败，请检查权限或用户是否存在'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'提升管理员时发生错误: {str(e)}'})
+
+# 降级群组成员
+@app.route('/demote_group_member', methods=['POST'])
+def demote_group_member():
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        group_id = request.form.get('group_id', type=int)
+        target_user_name = request.form.get('user_name', '').strip()
+        
+        if not group_id or not target_user_name:
+            return jsonify({'success': False, 'message': '群组ID和用户名不能为空'})
+        
+        if fuc.set_group_member_role(group_id, target_user_name, 'member', session['username']):
+            return jsonify({'success': True, 'message': f'已将 {target_user_name} 降级为普通成员'})
+        else:
+            return jsonify({'success': False, 'message': '降级成员失败，请检查权限或用户是否存在'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'降级成员时发生错误: {str(e)}'})
+
+# 踢出群组成员
+@app.route('/kick_group_member', methods=['POST'])
+def kick_group_member():
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        group_id = request.form.get('group_id', type=int)
+        target_user_name = request.form.get('user_name', '').strip()
+        
+        if not group_id or not target_user_name:
+            return jsonify({'success': False, 'message': '群组ID和用户名不能为空'})
+        
+        if fuc.remove_group_member(group_id, target_user_name, session['username']):
+            return jsonify({'success': True, 'message': f'已将 {target_user_name} 移出群组'})
+        else:
+            return jsonify({'success': False, 'message': '移出成员失败，请检查权限或用户是否存在'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'移出成员时发生错误: {str(e)}'})
+
+# 更新群公告
+@app.route('/update_announcement', methods=['POST'])
+def update_announcement():
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        group_id = request.form.get('group_id', type=int)
+        announcement_text = request.form.get('announcement_text', '').strip()
+        
+        if not group_id:
+            return jsonify({'success': False, 'message': '群组ID不能为空'})
+        
+        if fuc.update_group_announcement(group_id, announcement_text, session['username']):
+            return jsonify({'success': True, 'message': '群公告更新成功'})
+        else:
+            return jsonify({'success': False, 'message': '更新群公告失败，请检查权限'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'更新群公告时发生错误: {str(e)}'})
 
 # 获取聊天用户列表
 @app.route('/chat_users')
@@ -542,12 +694,18 @@ def chat_messages(chat_with_user):
         
         # 添加文件消息
         for file in file_messages:
+            msg_type = 'file'
+            # Check if it's a voice message
+            if file['file_type'] and (file['file_type'].startswith('audio/') or file['file_name'].endswith('.webm') or file['file_name'].endswith('.wav')):
+                msg_type = 'voice'
+                
             all_messages.append({
                 'id': file['id'],
-                'type': 'file',
+                'type': msg_type,
                 'sender': file['sender_name'],
                 'receiver': file['receiver_name'],
                 'content': file['file_name'],
+                'file_path': file['file_path'], # Ensure file_path is passed
                 'time': file['send_time'],
                 'is_read': file['is_read'],
                 'is_withdrawn': False,
@@ -575,6 +733,13 @@ def send_private_message():
     
     try:
         if fuc.send_private_message(session['username'], receiver_name, message):
+            # Real-time notification
+            socketio.emit('new_private_message', {
+                'sender': session['username'],
+                'content': message,
+                'time': datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }, room=receiver_name)
+            
             # 创建通知
             
             return jsonify({'success': True, 'message': '发送成功'})
@@ -1056,6 +1221,63 @@ def send_file():
     except Exception as e:
         return jsonify({'success': False, 'message': f'发送文件时发生错误: {str(e)}'})
 
+@app.route('/send_voice_message', methods=['POST'])
+def send_voice_message():
+    """发送语音消息"""
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'})
+    
+    try:
+        receiver_name = request.form.get('receiver')
+        if 'audio' not in request.files:
+            return jsonify({'success': False, 'message': '没有上传音频'})
+        
+        audio_file = request.files['audio']
+        
+        # 创建文件存储目录
+        file_dir = os.path.join(app.root_path, 'static', 'shared_files')
+        if not os.path.exists(file_dir):
+            os.makedirs(file_dir)
+        
+        # 生成唯一的文件名
+        import uuid
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        unique_filename = f"voice_{uuid.uuid4().hex}_{timestamp}.webm"
+        destination_path = os.path.join(file_dir, unique_filename)
+        
+        # 保存文件
+        audio_file.save(destination_path)
+        
+        # 获取文件信息
+        file_size = os.path.getsize(destination_path)
+        file_type = 'audio/webm'
+        
+        # 保存文件信息到数据库 (using shared_files table)
+        file_id = fuc.save_shared_file(
+            session['username'],
+            receiver_name,
+            unique_filename,
+            os.path.join('shared_files', unique_filename),
+            file_size,
+            file_type
+        )
+        
+        if file_id:
+            # Real-time notification
+            socketio.emit('new_private_message', {
+                'sender': session['username'],
+                'content': unique_filename,
+                'file_path': os.path.join('shared_files', unique_filename),
+                'type': 'voice',
+                'time': datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }, room=receiver_name)
+            
+            return jsonify({'success': True, 'message': '发送成功'})
+        else:
+            return jsonify({'success': False, 'message': '发送失败'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'发送语音时发生错误: {str(e)}'})
+
 @app.route('/get_shared_files')
 def get_shared_files():
     """获取分享的文件"""
@@ -1214,7 +1436,46 @@ import threading
 import time
 
 
+# SocketIO Event Handlers
+@socketio.on('connect')
+def handle_connect():
+    if 'username' in session:
+        # User joins their own room for private messages
+        join_room(session['username'])
+        fuc.update_user_status(session['username'], True)
+        emit('status_change', {'username': session['username'], 'status': 'online'}, broadcast=True)
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    if 'username' in session:
+        fuc.update_user_status(session['username'], False)
+        emit('status_change', {'username': session['username'], 'status': 'offline'}, broadcast=True)
+
+@socketio.on('join_group')
+def handle_join_group(data):
+    group_id = data.get('group_id')
+    if group_id:
+        join_room(f"group_{group_id}")
+
+@socketio.on('leave_group')
+def handle_leave_group(data):
+    group_id = data.get('group_id')
+    if group_id:
+        leave_room(f"group_{group_id}")
+
+@socketio.on('typing')
+def handle_typing(data):
+    receiver = data.get('receiver')
+    if receiver:
+        emit('typing', {'sender': session.get('username')}, room=receiver)
+
+@socketio.on('mark_group_read')
+def handle_mark_group_read(data):
+    message_id = data.get('message_id')
+    if message_id:
+        fuc.mark_group_message_read(message_id, session['username'])
+
 if __name__ == '__main__':
     APP_IP = os.getenv('APP_IP', '127.0.0.1')  # 默认值
     APP_PORT = int(os.getenv('APP_PORT', 5000)) # 默认值
-    app.run(debug=True, host=APP_IP, port=APP_PORT)
+    socketio.run(app, debug=True, host=APP_IP, port=APP_PORT)
